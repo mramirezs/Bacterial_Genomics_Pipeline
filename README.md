@@ -40,3 +40,11 @@ source ~/.bashrc
 
 # Verificar instalación de Mamba
 mamba --version
+```
+
+# Crear el entorno usando Mamba (recomendado por velocidad)
+mamba env create -f bact_pipeline.yml
+
+# Activar el entorno
+mamba activate bact_pipeline
+
