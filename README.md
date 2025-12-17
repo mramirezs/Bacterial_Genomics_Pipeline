@@ -79,9 +79,13 @@ mamba install unicycler flye spades quast bandage -y
 
 # Instalar herramientas AMR compatibles
 mamba install ncbi-amrfinderplus barrnap -y
+
+# Configurar base de datos de AMRFinderPlus (primera vez)
+amrfinder_update --database 05_amr_screening/amrfinder_db
 ```
 
-> ⏱️ **Tiempo estimado de instalación**: 10-15 minutos
+> ⏱️ **Tiempo estimado de instalación**: 10-15 minutos  
+> 📦 **Descarga de base de datos AMRFinderPlus**: ~500 MB, 2-5 minutos adicionales
 
 #### 🦠 Ambiente 2: Anotación y AMR (`bact_amr`)
 
@@ -91,9 +95,14 @@ Este ambiente está dedicado a Prokka y Abricate, que requieren versiones espec�
 # Crear ambiente para Prokka y Abricate
 mamba create -n bact_amr -c conda-forge -c bioconda -c defaults \
   python=3.9 prokka abricate -y
+
+# Activar y configurar base de datos de Abricate (primera vez)
+mamba activate bact_amr
+abricate --setupdb
 ```
 
-> ⏱️ **Tiempo estimado de instalación**: 5-10 minutos
+> ⏱️ **Tiempo estimado de instalación**: 5-10 minutos  
+> 📦 **Descarga de bases de datos Abricate**: ~100 MB, 1-3 minutos adicionales
 
 #### 🧪 Ambiente 3: RGI (`bact_rgi`)
 
@@ -120,8 +129,11 @@ bwa 2>&1 | head -3
 samtools --version
 unicycler --version
 spades.py --version
-amrfinder --version
 quast --version
+
+# Verificar AMRFinderPlus y base de datos
+amrfinder --version
+amrfinder --database 05_amr_screening/amrfinder_db --database_version
 ```
 
 #### Verificar `bact_amr`:
@@ -147,37 +159,104 @@ rgi load --help
 
 ### 5. Exportar ambientes para reproducibilidad
 
-Una vez que todos los ambientes estén funcionando correctamente, expórtalos para garantizar la reproducibilidad:
+Una vez que todos los ambientes estén funcionando correctamente, expórtalos para garantizar la reproducibilidad en otros servidores o equipos:
 
 ```bash
-# Crear directorio para ambientes
+# Crear directorio para almacenar archivos de ambientes
 mkdir -p envs
 
-# Exportar ambiente principal
+# Exportar ambiente principal (con todas las versiones exactas)
 mamba activate bact_main
-mamba env export > envs/bact_main.yml
+mamba env export --no-builds > envs/bact_main.yml
 
 # Exportar ambiente AMR
 mamba activate bact_amr
-mamba env export > envs/bact_amr.yml
+mamba env export --no-builds > envs/bact_amr.yml
 
 # Exportar ambiente RGI
 mamba activate bact_rgi
-mamba env export > envs/bact_rgi.yml
+mamba env export --no-builds > envs/bact_rgi.yml
+
+# Opcional: Exportar solo paquetes principales (archivo más limpio)
+mamba activate bact_main
+mamba env export --from-history > envs/bact_main_minimal.yml
 ```
+
+> 💡 **Nota**: `--no-builds` genera archivos YML más portables entre diferentes sistemas operativos. Los archivos `_minimal.yml` solo incluyen paquetes instalados explícitamente, sin dependencias.
 
 ### 6. Replicar ambientes en otro servidor
 
 Para recrear exactamente los mismos ambientes en otra máquina:
 
-```bash
-# Copiar archivos YAML al nuevo servidor
-scp envs/*.yml usuario@servidor:/ruta/destino/
+#### Opción A: Copiar archivos YML y crear ambientes
 
-# En el nuevo servidor, crear los ambientes
+```bash
+# Desde tu máquina local, copiar archivos al servidor remoto
+scp envs/*.yml usuario@servidor:/home/usuario/Ecoli_Project/envs/
+
+# En el servidor remoto, crear los ambientes desde los archivos
+cd /home/usuario/Ecoli_Project
+
 mamba env create -f envs/bact_main.yml
 mamba env create -f envs/bact_amr.yml
 mamba env create -f envs/bact_rgi.yml
+
+# Configurar bases de datos en el nuevo servidor
+mamba activate bact_main
+amrfinder_update --database 05_amr_screening/amrfinder_db
+
+mamba activate bact_amr
+abricate --setupdb
+
+mamba activate bact_rgi
+# Configurar CARD database si es necesario (ver sección RGI)
+```
+
+#### Opción B: Clonar el repositorio completo
+
+```bash
+# En el servidor remoto
+git clone https://github.com/tu-usuario/Ecoli_Project.git
+cd Ecoli_Project
+
+# Crear ambientes desde los archivos YML versionados
+mamba env create -f envs/bact_main.yml
+mamba env create -f envs/bact_amr.yml
+mamba env create -f envs/bact_rgi.yml
+
+# Configurar bases de datos
+mamba activate bact_main
+amrfinder_update --database 05_amr_screening/amrfinder_db
+
+mamba activate bact_amr
+abricate --setupdb
+```
+
+### 7. Verificar bases de datos configuradas
+
+Después de configurar los ambientes en un nuevo servidor, verifica que las bases de datos estén correctamente instaladas:
+
+```bash
+# Verificar base de datos AMRFinderPlus
+mamba activate bact_main
+amrfinder --list_organisms
+amrfinder --database 05_amr_screening/amrfinder_db --database_version
+
+# Verificar bases de datos Abricate
+mamba activate bact_amr
+abricate --list
+
+# Salida esperada:
+# DATABASE       SEQUENCES  DBTYPE  DATE
+# argannot       2223       nucl    2023-Jun-19
+# card           2631       nucl    2023-Jun-19
+# ecoh           597        nucl    2023-Jun-19
+# ecoli_vf       2701       nucl    2023-Jun-19
+# megares        6635       nucl    2023-Jun-19
+# ncbi           5386       nucl    2023-Jun-19
+# plasmidfinder  460        nucl    2023-Jun-19
+# resfinder      3077       nucl    2023-Jun-19
+# vfdb           2597       nucl    2023-Jun-19
 ```
 
 ---
@@ -232,14 +311,18 @@ rgi main --input_sequence 04_assembly/illumina_only/contigs.fasta \
 ```bash
 mamba activate bact_main
 
-# Actualizar base de datos (primera vez)
-amrfinder --update
+# Verificar que la base de datos esté configurada
+amrfinder --database 05_amr_screening/amrfinder_db --list_organisms
 
-# Ejecutar AMRFinderPlus
+# Ejecutar AMRFinderPlus con base de datos local
 amrfinder --nucleotide 04_assembly/illumina_only/contigs.fasta \
+  --database 05_amr_screening/amrfinder_db \
   --organism Escherichia \
   --output 05_amr_screening/amrfinder_results.tsv \
-  --plus
+  --plus --threads 8
+
+# Si necesitas actualizar la base de datos
+amrfinder_update --database 05_amr_screening/amrfinder_db
 ```
 
 ---
@@ -279,12 +362,30 @@ mamba activate <nombre_ambiente>
 ```bash
 mamba activate bact_rgi
 
-# Descargar base de datos CARD
+# Descargar base de datos CARD (última versión)
 wget https://card.mcmaster.ca/latest/data
 tar -xvf data ./card.json
 
-# Cargar base de datos
+# Cargar base de datos local
 rgi load --card_json ./card.json --local
+
+# Verificar carga
+rgi database --version --local
+```
+
+### Bases de datos desactualizadas
+
+**Para AMRFinderPlus**:
+```bash
+mamba activate bact_main
+amrfinder_update --database 05_amr_screening/amrfinder_db --force
+```
+
+**Para Abricate**:
+```bash
+mamba activate bact_amr
+abricate-get_db --db resfinder --force  # Actualizar base específica
+abricate --setupdb                       # Reindexar todas las bases
 ```
 
 ---
