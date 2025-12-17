@@ -21,3 +21,22 @@ Ecoli_Project/
 └── scripts/                  # Scripts de automatización
 ```
 
+## 🛠️ Instalación y Configuración del Entorno
+
+Para garantizar la reproducibilidad y evitar conflictos de dependencias, utilizamos **Conda** (a través de **Miniforge/Mamba**) para gestionar todo el software bioinformático.
+
+### 1. Pre-requisitos: Instalar Miniforge
+
+Si aún no tienes un gestor de paquetes instalado en el servidor, recomendamos **Miniforge** por su velocidad y configuración nativa con `conda-forge`.
+
+```bash
+# Descargar e instalar Miniforge (Linux x86_64)
+wget "[https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh](https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh)"
+bash Miniforge3-Linux-x86_64.sh -b -p $HOME/miniforge3
+
+# Inicializar y activar
+$HOME/miniforge3/bin/conda init bash
+source ~/.bashrc
+
+# Verificar instalación de Mamba
+mamba --version
