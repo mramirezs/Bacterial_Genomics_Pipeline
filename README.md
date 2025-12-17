@@ -42,9 +42,14 @@ source ~/.bashrc
 mamba --version
 ```
 
-# Crear el entorno usando Mamba (recomendado por velocidad)
+## Crear el entorno usando Mamba (recomendado por velocidad)
+
+```bash
 mamba env create -f bact_pipeline.yml
+```
 
-# Activar el entorno
+## Activar el entorno
+
+```bash
 mamba activate bact_pipeline
-
+```
