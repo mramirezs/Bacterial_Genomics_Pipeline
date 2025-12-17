@@ -9,17 +9,33 @@ El proyecto sigue una organización estricta para garantizar la reproducibilidad
 ```text
 Ecoli_Project/
 ├── 00_raw_data/              # Datos crudos (Enlaces simbólicos)
-│   ├── illumina/             # URO5550422 (PE)
-│   └── nanopore/             # FRAN93 (Long Reads)
+│   ├── illumina/             # R1.fastq.gz, R2.fastq.gz (Paired-End)
+│   └── nanopore/             # Long reads (ONT)
 ├── 01_reference/             # Genoma de referencia (E. coli K-12 MG1655)
-├── 02_qc/                    # Control de calidad (FastQC, NanoPlot)
-├── 03_mapping/               # Análisis de Variantes (BWA, Minimap2)
-├── 04_assembly/              # Ensamblaje De Novo (Separado)
-│   ├── illumina_only/        # Spades
-│   └── nanopore_only/        # Flye
-├── 05_amr_screening/         # Detección de genes (Abricate, RGI, AMRFinder)
-├── envs/                     # Archivos de ambientes exportados
-└── scripts/                  # Scripts de automatización
+├── 02_qc/                    # Control de calidad
+│   ├── illumina_pre/         # FastQC de datos crudos
+│   ├── illumina_post/        # FastQC y fastp de datos limpios
+│   │   └── trimmed/          # Lecturas filtradas + reportes
+│   └── nanopore/             # NanoPlot y lecturas filtradas
+├── 03_mapping/               # Análisis de mapeo y variantes
+│   ├── bwa_illumina/         # Mapeo de lecturas cortas
+│   ├── minimap_nanopore/     # Mapeo de lecturas largas
+│   └── variants_consensus/   # Llamado de variantes y consenso
+├── 04_assembly/              # Ensamblajes De Novo
+│   ├── unicycler_hybrid/     # Ensamblaje híbrido (Illumina + Nanopore)
+│   ├── flye_nanopore/        # Ensamblaje solo Nanopore
+│   └── quast_evaluation/     # Evaluación de calidad de ensamblajes
+├── 05_amr_screening/         # Detección de genes AMR
+│   ├── amrfinder_db/         # Base de datos AMRFinderPlus (local)
+│   │   ├── 2025-12-03.1/     # Versión específica
+│   │   └── latest -> 2025-12-03.1
+│   ├── amrfinder/            # Resultados AMRFinderPlus
+│   ├── abricate/             # Resultados Abricate
+│   └── rgi/                  # Resultados RGI
+├── 06_annotation/            # Anotación genómica (Prokka/Bakta)
+├── Enviromentals/            # Archivos de configuración de ambientes
+├── Scripts/                  # Scripts de automatización
+└── logs/                     # Logs de ejecución
 ```
 
 ## 🛠️ Instalación y Configuración del Entorno
@@ -366,12 +382,51 @@ quast.py \
 ```bash
 mamba activate bact_amr
 
-# Anotar genoma con Prokka
-prokka --outdir 05_annotation/ --prefix ecoli_sample 04_assembly/illumina_only/contigs.fasta
+# Crear directorio de anotación
+mkdir -p 06_annotation
 
-# Detectar genes AMR con Abricate
-abricate --db card 04_assembly/illumina_only/contigs.fasta > 05_amr_screening/abricate_card.tsv
-abricate --db resfinder 04_assembly/illumina_only/contigs.fasta > 05_amr_screening/abricate_resfinder.tsv
+# Anotar ensamblaje híbrido con Prokka
+prokka \
+  --outdir 06_annotation/prokka_hybrid/ \
+  --prefix ecoli_hybrid \
+  --kingdom Bacteria \
+  --genus Escherichia \
+  --species coli \
+  --strain sample_01 \
+  --gram neg \
+  --usegenus \
+  --addgenes \
+  --addmrna \
+  --rfam \
+  --cpus 8 \
+  04_assembly/unicycler_hybrid/assembly.fasta
+
+# Detectar genes AMR con Abricate (múltiples bases de datos)
+mkdir -p 05_amr_screening/abricate
+
+# CARD database
+abricate --db card \
+  04_assembly/unicycler_hybrid/assembly.fasta > \
+  05_amr_screening/abricate/card_results.tsv
+
+# ResFinder database
+abricate --db resfinder \
+  04_assembly/unicycler_hybrid/assembly.fasta > \
+  05_amr_screening/abricate/resfinder_results.tsv
+
+# NCBI database
+abricate --db ncbi \
+  04_assembly/unicycler_hybrid/assembly.fasta > \
+  05_amr_screening/abricate/ncbi_results.tsv
+
+# ARG-ANNOT database
+abricate --db argannot \
+  04_assembly/unicycler_hybrid/assembly.fasta > \
+  05_amr_screening/abricate/argannot_results.tsv
+
+# Resumen consolidado de Abricate
+abricate --summary 05_amr_screening/abricate/*.tsv > \
+  05_amr_screening/abricate/abricate_summary.tsv
 ```
 
 ### Para análisis AMR con RGI:
@@ -379,13 +434,33 @@ abricate --db resfinder 04_assembly/illumina_only/contigs.fasta > 05_amr_screeni
 ```bash
 mamba activate bact_rgi
 
+# Crear directorio
+mkdir -p 05_amr_screening/rgi
+
 # Cargar base de datos CARD (primera vez)
-rgi load --card_json /path/to/card.json --local
+# Descargar última versión de CARD
+wget -O 05_amr_screening/rgi/card_data.tar.bz2 https://card.mcmaster.ca/latest/data
+tar -xvf 05_amr_screening/rgi/card_data.tar.bz2 -C 05_amr_screening/rgi/
+
+# Cargar base de datos local
+rgi load --card_json 05_amr_screening/rgi/card.json --local
 
 # Ejecutar análisis RGI
-rgi main --input_sequence 04_assembly/illumina_only/contigs.fasta \
-  --output_file 05_amr_screening/rgi_results \
-  --local --clean
+rgi main \
+  --input_sequence 04_assembly/unicycler_hybrid/assembly.fasta \
+  --output_file 05_amr_screening/rgi/rgi_results \
+  --input_type contig \
+  --local \
+  --clean \
+  --num_threads 8
+
+# Generar visualizaciones
+rgi heatmap \
+  --input 05_amr_screening/rgi/rgi_results.txt \
+  --output 05_amr_screening/rgi/rgi_heatmap
+
+# Verificar versión de base de datos
+rgi database --version --local
 ```
 
 ### Para detección AMR con AMRFinderPlus:
@@ -393,15 +468,35 @@ rgi main --input_sequence 04_assembly/illumina_only/contigs.fasta \
 ```bash
 mamba activate bact_main
 
+# Crear directorio
+mkdir -p 05_amr_screening/amrfinder
+
 # Verificar que la base de datos esté configurada
 amrfinder --database 05_amr_screening/amrfinder_db --list_organisms
 
-# Ejecutar AMRFinderPlus con base de datos local
-amrfinder --nucleotide 04_assembly/illumina_only/contigs.fasta \
+# Ejecutar AMRFinderPlus en el ensamblaje híbrido
+amrfinder \
+  --nucleotide 04_assembly/unicycler_hybrid/assembly.fasta \
   --database 05_amr_screening/amrfinder_db \
   --organism Escherichia \
-  --output 05_amr_screening/amrfinder_results.tsv \
-  --plus --threads 8
+  --output 05_amr_screening/amrfinder/amrfinder_results.tsv \
+  --plus \
+  --name ecoli_hybrid \
+  --threads 8
+
+# Si también tienes archivo de proteínas predichas (de Prokka)
+amrfinder \
+  --protein 06_annotation/prokka_hybrid/ecoli_hybrid.faa \
+  --database 05_amr_screening/amrfinder_db \
+  --organism Escherichia \
+  --output 05_amr_screening/amrfinder/amrfinder_protein_results.tsv \
+  --plus \
+  --threads 8
+
+# Generar reporte resumido
+grep -v "^#" 05_amr_screening/amrfinder/amrfinder_results.tsv | \
+  cut -f5,6,7,9,11,12 | \
+  sort -u > 05_amr_screening/amrfinder/amrfinder_summary.txt
 
 # Si necesitas actualizar la base de datos
 amrfinder_update --database 05_amr_screening/amrfinder_db
