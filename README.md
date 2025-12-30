@@ -1,67 +1,185 @@
-# 🧬 Proyecto: Vigilancia Genómica y Análisis de Resistencia en *E. coli*
+# 🧬 Pipeline de Vigilancia Genómica y Análisis de Resistencia Antimicrobiana en Bacterias
 
-Este repositorio documenta el flujo de trabajo bioinformático para el análisis de una cepa clínica de *Escherichia coli*. El objetivo es detectar genes de resistencia a antimicrobianos (AMR) y variantes genéticas mediante dos estrategias complementarias: **Resecuenciamiento (Mapeo)** y **Ensamblaje De Novo (No Híbrido)**.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Bioinformatics](https://img.shields.io/badge/Bioinformatics-Pipeline-blue.svg)]()
+
+Este repositorio documenta un flujo de trabajo bioinformático completo para el análisis de genomas bacterianos clínicos utilizando datos de secuenciación de nueva generación (NGS). El pipeline integra tres estrategias de análisis complementarias: **Ensamblaje con Illumina**, **Ensamblaje con Nanopore** y **Ensamblaje Híbrido (Illumina + Nanopore)**, junto con detección exhaustiva de genes de resistencia a antimicrobianos (AMR) y análisis de variantes genómicas.
+
+---
+
+## 📋 Tabla de Contenidos
+
+- [Características del Pipeline](#-características-del-pipeline)
+- [Estructura del Proyecto](#-estructura-del-proyecto)
+- [Requisitos del Sistema](#-requisitos-del-sistema)
+- [Instalación y Configuración](#-instalación-y-configuración)
+- [Flujo de Trabajo](#-flujo-de-trabajo)
+- [Resultados Esperados](#-resultados-esperados)
+- [Interpretación de Resultados](#-interpretación-de-resultados)
+- [Solución de Problemas](#-solución-de-problemas)
+- [Referencias](#-referencias)
+
+---
+
+## 🎯 Características del Pipeline
+
+### Tecnologías Soportadas
+- **Illumina** (lecturas cortas, paired-end): Alta precisión, ideal para SNPs/INDELs
+- **Oxford Nanopore** (lecturas largas): Ensamblajes contiguos, detección de variantes estructurales
+- **Híbrido** (Illumina + Nanopore): Combina precisión y continuidad
+
+### Análisis Incluidos
+- ✅ Control de calidad exhaustivo (raw y trimmed reads)
+- ✅ Tres estrategias de ensamblaje independientes
+- ✅ Mapeo contra genoma de referencia y llamado de variantes
+- ✅ Detección de genes AMR con múltiples bases de datos
+- ✅ Anotación funcional de genomas
+- ✅ Evaluación de calidad de ensamblajes
+- ✅ Visualización y reportes integrados
+
+---
 
 ## 📂 Estructura del Proyecto
 
-El proyecto sigue una organización estricta para garantizar la reproducibilidad en entornos HPC:
-
 ```text
-Ecoli_Project/
-├── 00_raw_data/              # Datos crudos (Enlaces simbólicos)
-│   ├── illumina/             # R1.fastq.gz, R2.fastq.gz (Paired-End)
-│   └── nanopore/             # Long reads (ONT)
-├── 01_reference/             # Genoma de referencia (E. coli K-12 MG1655)
-├── 02_qc/                    # Control de calidad
-│   ├── illumina_pre/         # FastQC de datos crudos
-│   ├── illumina_post/        # FastQC y fastp de datos limpios
-│   │   └── trimmed/          # Lecturas filtradas + reportes
-│   └── nanopore/             # NanoPlot y lecturas filtradas
-├── 03_mapping/               # Análisis de mapeo y variantes
-│   ├── bwa_illumina/         # Mapeo de lecturas cortas
-│   ├── minimap_nanopore/     # Mapeo de lecturas largas
-│   └── variants_consensus/   # Llamado de variantes y consenso
-├── 04_assembly/              # Ensamblajes De Novo
-│   ├── unicycler_hybrid/     # Ensamblaje híbrido (Illumina + Nanopore)
-│   ├── flye_nanopore/        # Ensamblaje solo Nanopore
-│   └── quast_evaluation/     # Evaluación de calidad de ensamblajes
-├── 05_amr_screening/         # Detección de genes AMR
-│   ├── amrfinder_db/         # Base de datos AMRFinderPlus (local)
-│   │   ├── 2025-12-03.1/     # Versión específica
-│   │   └── latest -> 2025-12-03.1
-│   ├── amrfinder/            # Resultados AMRFinderPlus
-│   ├── abricate/             # Resultados Abricate
-│   └── rgi/                  # Resultados RGI
-├── 06_annotation/            # Anotación genómica (Prokka/Bakta)
-├── Enviromentals/            # Archivos de configuración de ambientes
-├── Scripts/                  # Scripts de automatización
-└── logs/                     # Logs de ejecución
+Bacterial_Genomics_Project/
+├── 00_raw_data/                    # Datos crudos de secuenciación
+│   ├── illumina/                   # Lecturas paired-end (R1, R2)
+│   │   ├── sample_R1.fastq.gz
+│   │   └── sample_R2.fastq.gz
+│   └── nanopore/                   # Lecturas largas ONT
+│       └── sample_ont.fastq.gz
+│
+├── 01_reference/                   # Genomas de referencia (opcional)
+│   ├── reference.fasta
+│   └── reference.gff
+│
+├── 02_qc/                          # Control de calidad
+│   ├── 01_illumina_raw/            # FastQC de datos crudos Illumina
+│   ├── 02_illumina_trimmed/        # FastQC post-trimming + reportes fastp
+│   ├── 03_nanopore_raw/            # NanoPlot de datos crudos ONT
+│   ├── 04_nanopore_filtered/       # NanoPlot post-filtrado
+│   └── 05_multiqc/                 # Reporte consolidado MultiQC
+│
+├── 03_assembly/                    # Ensamblajes de novo
+│   ├── 01_illumina_only/           # SPAdes (solo Illumina)
+│   │   ├── contigs.fasta
+│   │   ├── scaffolds.fasta
+│   │   └── assembly_graph.fastg
+│   ├── 02_nanopore_only/           # Flye (solo Nanopore)
+│   │   ├── assembly.fasta
+│   │   ├── assembly_info.txt
+│   │   └── assembly_graph.gfa
+│   ├── 03_hybrid/                  # Unicycler (Illumina + Nanopore)
+│   │   ├── assembly.fasta
+│   │   └── assembly.gfa
+│   └── 04_quast_evaluation/        # Evaluación comparativa QUAST
+│       └── report.html
+│
+├── 04_mapping/                     # Mapeo y análisis de variantes
+│   ├── 01_illumina/                # BWA + Samtools
+│   │   ├── aligned_sorted.bam
+│   │   ├── flagstat.txt
+│   │   └── coverage.txt
+│   ├── 02_nanopore/                # Minimap2 + Samtools
+│   │   ├── aligned_sorted.bam
+│   │   └── coverage.txt
+│   └── 03_variants/                # BCFtools variant calling
+│       ├── illumina_variants.vcf
+│       ├── nanopore_variants.vcf
+│       └── consensus.fasta
+│
+├── 05_annotation/                  # Anotación funcional
+│   ├── 01_prokka/                  # Anotación Prokka
+│   │   ├── genome.gff
+│   │   ├── genome.gbk
+│   │   ├── genome.faa
+│   │   └── genome.ffn
+│   └── 02_bakta/                   # Anotación Bakta (alternativa)
+│
+├── 06_amr_screening/               # Detección de genes AMR
+│   ├── amrfinder_db/               # Base de datos local AMRFinderPlus
+│   │   └── latest/
+│   ├── 01_amrfinder/               # Resultados AMRFinderPlus (NCBI)
+│   │   ├── amrfinder_results.tsv
+│   │   └── amrfinder_summary.txt
+│   ├── 02_abricate/                # Resultados Abricate (múltiples DBs)
+│   │   ├── card_results.tsv
+│   │   ├── resfinder_results.tsv
+│   │   ├── ncbi_results.tsv
+│   │   └── abricate_summary.tsv
+│   └── 03_rgi/                     # Resultados RGI/CARD
+│       ├── rgi_results.txt
+│       └── rgi_heatmap.png
+│
+├── 07_results/                     # Resultados consolidados y figuras
+│   ├── assembly_comparison.png
+│   ├── amr_summary.xlsx
+│   └── final_report.html
+│
+├── envs/                           # Archivos YAML de ambientes Conda
+│   ├── bact_main.yml
+│   ├── bact_amr.yml
+│   └── bact_rgi.yml
+│
+├── scripts/                        # Scripts de automatización
+│   ├── 01_qc_illumina.sh
+│   ├── 02_qc_nanopore.sh
+│   ├── 03_assembly_illumina.sh
+│   ├── 04_assembly_nanopore.sh
+│   ├── 05_assembly_hybrid.sh
+│   ├── 06_mapping.sh
+│   ├── 07_annotation.sh
+│   ├── 08_amr_screening.sh
+│   └── run_full_pipeline.sh
+│
+├── logs/                           # Logs de ejecución
+│   └── [timestamp]_pipeline.log
+│
+├── README.md                       # Este archivo
+└── LICENSE                         # Licencia MIT
+
 ```
 
-## 🛠️ Instalación y Configuración del Entorno
+---
 
-Debido a conflictos de dependencias entre herramientas bioinformáticas (versiones incompatibles de Perl, Python y bibliotecas compartidas), utilizamos **tres ambientes Conda especializados** para garantizar la compatibilidad y reproducibilidad.
+## 💻 Requisitos del Sistema
 
-### 1. Pre-requisitos: Instalar Miniforge
+### Hardware Recomendado
+- **CPU**: Mínimo 8 cores (16+ cores recomendado para ensamblaje híbrido)
+- **RAM**: Mínimo 16 GB (32+ GB recomendado)
+- **Almacenamiento**: 50-100 GB libres por muestra (dependiendo de la cobertura)
 
-Si aún no tienes un gestor de paquetes instalado en el servidor, recomendamos **Miniforge** por su velocidad y configuración nativa con `conda-forge`.
+### Software Base
+- Linux/Unix (Ubuntu 20.04+, CentOS 7+, o similar)
+- Bash shell
+- Git
+- Conexión a internet (para instalación de herramientas)
+
+---
+
+## 🛠️ Instalación y Configuración
+
+### Paso 1: Instalar Miniforge (Gestor de Paquetes)
+
+Si aún no tienes un gestor de ambientes Conda instalado:
 
 ```bash
-# Descargar e instalar Miniforge (Linux x86_64)
+# Descargar Miniforge para Linux x86_64
 wget "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh"
+
+# Instalar
 bash Miniforge3-Linux-x86_64.sh -b -p $HOME/miniforge3
 
-# Inicializar y activar
+# Inicializar
 $HOME/miniforge3/bin/conda init bash
 source ~/.bashrc
 
-# Verificar instalación de Mamba
+# Verificar instalación
 mamba --version
 ```
 
-### 2. Configurar canales de Bioconda
-
-Configura los canales necesarios **una sola vez** antes de crear los ambientes:
+### Paso 2: Configurar Canales de Bioconda
 
 ```bash
 conda config --add channels defaults
@@ -70,18 +188,20 @@ conda config --add channels conda-forge
 conda config --set channel_priority strict
 ```
 
-### 3. Crear los ambientes especializados
+### Paso 3: Crear los Tres Ambientes Especializados
 
-#### 🧬 Ambiente 1: Pipeline Principal (`bact_main`)
+Debido a conflictos de dependencias entre herramientas bioinformáticas, el pipeline utiliza **tres ambientes Conda separados** para garantizar compatibilidad y reproducibilidad.
 
-Este ambiente contiene todas las herramientas para control de calidad, mapeo, ensamblaje y detección básica de AMR.
+#### 🧬 Ambiente 1: `bact_main` (Pipeline Principal)
+
+Contiene herramientas para QC, mapeo, ensamblaje y detección básica de AMR.
 
 ```bash
 # Crear ambiente base
 conda create -n bact_main -c conda-forge -c bioconda -c defaults \
   python=3.10 pip pigz openjdk=11 -y
 
-# Activar ambiente
+# Activar
 conda activate bact_main
 
 # Instalar herramientas de control de calidad
@@ -93,212 +213,183 @@ conda install bwa minimap2 samtools bcftools bedtools blast -y
 # Instalar ensambladores
 conda install unicycler flye spades quast bandage -y
 
-# Instalar herramientas AMR compatibles
+# Instalar herramientas AMR
 conda install ncbi-amrfinderplus barrnap -y
 
-# Configurar base de datos de AMRFinderPlus (primera vez)
-amrfinder_update --database 05_amr_screening/amrfinder_db
+# Configurar base de datos AMRFinderPlus (primera vez)
+mkdir -p 06_amr_screening/amrfinder_db
+amrfinder_update --database 06_amr_screening/amrfinder_db
 ```
 
-> ⏱️ **Tiempo estimado de instalación**: 10-15 minutos  
-> 📦 **Descarga de base de datos AMRFinderPlus**: ~500 MB, 2-5 minutos adicionales
+**⏱️ Tiempo de instalación**: ~15 minutos  
+**📦 Descarga de base de datos**: ~500 MB adicionales
 
-#### 🦠 Ambiente 2: Anotación y AMR (`bact_amr`)
+#### 🦠 Ambiente 2: `bact_amr` (Anotación y AMR)
 
-Este ambiente está dedicado a Prokka y Abricate, que requieren versiones específicas de Perl incompatibles con el ambiente principal.
+Dedicado a Prokka y Abricate, que requieren versiones específicas de Perl.
 
 ```bash
-# Crear ambiente para Prokka y Abricate
+# Crear ambiente
 mamba create -n bact_amr -c conda-forge -c bioconda -c defaults \
   python=3.9 prokka abricate -y
 
-# Activar y configurar base de datos de Abricate (primera vez)
+# Activar y configurar bases de datos
 mamba activate bact_amr
 abricate --setupdb
 ```
 
-> ⏱️ **Tiempo estimado de instalación**: 5-10 minutos  
-> 📦 **Descarga de bases de datos Abricate**: ~100 MB, 1-3 minutos adicionales
+**⏱️ Tiempo de instalación**: ~10 minutos  
+**📦 Descarga de bases de datos**: ~100 MB adicionales
 
-#### 🧪 Ambiente 3: RGI (`bact_rgi`)
+#### 🧪 Ambiente 3: `bact_rgi` (AMR Avanzado)
 
-RGI (Resistance Gene Identifier) requiere dependencias muy específicas que entran en conflicto con otras herramientas, por lo que se instala en un ambiente separado.
+Para RGI (Resistance Gene Identifier) con base de datos CARD.
 
 ```bash
-# Crear ambiente para RGI
+# Crear ambiente
 mamba create -n bact_rgi -c conda-forge -c bioconda -c defaults \
   python=3.11 rgi -y
+
+# Activar
+mamba activate bact_rgi
+
+# Descargar y cargar base de datos CARD
+mkdir -p 06_amr_screening/rgi
+cd 06_amr_screening/rgi
+wget https://card.mcmaster.ca/latest/data
+tar -xvf data
+rgi load --card_json card.json --local
+cd ../..
 ```
 
-> ⏱️ **Tiempo estimado de instalación**: 5-10 minutos
+**⏱️ Tiempo de instalación**: ~10 minutos  
+**📦 Descarga de base de datos CARD**: ~50 MB
 
-### 4. Verificar las instalaciones
-
-#### Verificar `bact_main`:
+### Paso 4: Verificar Instalaciones
 
 ```bash
-mamba activate bact_main
-
-# Verificar herramientas clave
+# Verificar bact_main
+conda activate bact_main
 fastqc --version
 bwa 2>&1 | head -3
 samtools --version
 unicycler --version
 spades.py --version
+flye --version
 quast --version
-
-# Verificar AMRFinderPlus y base de datos
 amrfinder --version
-amrfinder --database 05_amr_screening/amrfinder_db --database_version
-```
 
-#### Verificar `bact_amr`:
-
-```bash
-mamba activate bact_amr
-
-# Verificar herramientas
+# Verificar bact_amr
+conda activate bact_amr
 prokka --version
 abricate --version
-abricate --list  # Listar bases de datos disponibles
-```
+abricate --list
 
-#### Verificar `bact_rgi`:
-
-```bash
-mamba activate bact_rgi
-
-# Verificar RGI
+# Verificar bact_rgi
+conda activate bact_rgi
 rgi main --version
-rgi load --help
+rgi database --version --local
 ```
 
-### 5. Exportar ambientes para reproducibilidad
-
-Una vez que todos los ambientes estén funcionando correctamente, expórtalos para garantizar la reproducibilidad en otros servidores o equipos:
+### Paso 5: Exportar Ambientes (Reproducibilidad)
 
 ```bash
-# Crear directorio para almacenar archivos de ambientes
+# Crear directorio
 mkdir -p envs
 
-# Exportar ambiente principal (con todas las versiones exactas)
-mamba activate bact_main
-mamba env export --no-builds > envs/bact_main.yml
+# Exportar ambientes
+conda activate bact_main
+conda env export --no-builds > envs/bact_main.yml
 
-# Exportar ambiente AMR
-mamba activate bact_amr
-mamba env export --no-builds > envs/bact_amr.yml
+conda activate bact_amr
+conda env export --no-builds > envs/bact_amr.yml
 
-# Exportar ambiente RGI
-mamba activate bact_rgi
-mamba env export --no-builds > envs/bact_rgi.yml
-
-# Opcional: Exportar solo paquetes principales (archivo más limpio)
-mamba activate bact_main
-mamba env export --from-history > envs/bact_main_minimal.yml
+conda activate bact_rgi
+conda env export --no-builds > envs/bact_rgi.yml
 ```
 
-> 💡 **Nota**: `--no-builds` genera archivos YML más portables entre diferentes sistemas operativos. Los archivos `_minimal.yml` solo incluyen paquetes instalados explícitamente, sin dependencias.
-
-### 6. Replicar ambientes en otro servidor
-
-Para recrear exactamente los mismos ambientes en otra máquina:
-
-#### Opción A: Copiar archivos YML y crear ambientes
+### Paso 6: Clonar o Replicar en Otro Servidor
 
 ```bash
-# Desde tu máquina local, copiar archivos al servidor remoto
-scp envs/*.yml usuario@servidor:/home/usuario/Ecoli_Project/envs/
+# Opción A: Clonar repositorio
+git clone https://github.com/tu-usuario/Bacterial_Genomics_Project.git
+cd Bacterial_Genomics_Project
 
-# En el servidor remoto, crear los ambientes desde los archivos
-cd /home/usuario/Ecoli_Project
+# Opción B: Copiar archivos YML
+scp envs/*.yml usuario@servidor:/ruta/proyecto/envs/
 
-mamba env create -f envs/bact_main.yml
-mamba env create -f envs/bact_amr.yml
-mamba env create -f envs/bact_rgi.yml
-
-# Configurar bases de datos en el nuevo servidor
-mamba activate bact_main
-amrfinder_update --database 05_amr_screening/amrfinder_db
-
-mamba activate bact_amr
-abricate --setupdb
-
-mamba activate bact_rgi
-# Configurar CARD database si es necesario (ver sección RGI)
-```
-
-#### Opción B: Clonar el repositorio completo
-
-```bash
-# En el servidor remoto
-git clone https://github.com/tu-usuario/Ecoli_Project.git
-cd Ecoli_Project
-
-# Crear ambientes desde los archivos YML versionados
+# Crear ambientes desde YML
 mamba env create -f envs/bact_main.yml
 mamba env create -f envs/bact_amr.yml
 mamba env create -f envs/bact_rgi.yml
 
 # Configurar bases de datos
-mamba activate bact_main
-amrfinder_update --database 05_amr_screening/amrfinder_db
+conda activate bact_main
+amrfinder_update --database 06_amr_screening/amrfinder_db
 
-mamba activate bact_amr
+conda activate bact_amr
 abricate --setupdb
-```
 
-### 7. Verificar bases de datos configuradas
-
-Después de configurar los ambientes en un nuevo servidor, verifica que las bases de datos estén correctamente instaladas:
-
-```bash
-# Verificar base de datos AMRFinderPlus
-mamba activate bact_main
-amrfinder --list_organisms
-amrfinder --database 05_amr_screening/amrfinder_db --database_version
-
-# Verificar bases de datos Abricate
-mamba activate bact_amr
-abricate --list
-
-# Salida esperada:
-# DATABASE       SEQUENCES  DBTYPE  DATE
-# argannot       2223       nucl    2023-Jun-19
-# card           2631       nucl    2023-Jun-19
-# ecoh           597        nucl    2023-Jun-19
-# ecoli_vf       2701       nucl    2023-Jun-19
-# megares        6635       nucl    2023-Jun-19
-# ncbi           5386       nucl    2023-Jun-19
-# plasmidfinder  460        nucl    2023-Jun-19
-# resfinder      3077       nucl    2023-Jun-19
-# vfdb           2597       nucl    2023-Jun-19
+conda activate bact_rgi
+# Descargar CARD y ejecutar: rgi load --card_json card.json --local
 ```
 
 ---
 
-## 🚀 Uso de los ambientes en el pipeline
+## 🔬 Flujo de Trabajo
 
-### Para control de calidad, mapeo y ensamblaje:
+### Fase 1: Preparación de Datos
+
+#### 1.1 Crear Enlaces Simbólicos a Datos Crudos
 
 ```bash
-mamba activate bact_main
+# Crear directorio de datos crudos
+mkdir -p 00_raw_data/illumina 00_raw_data/nanopore
 
-# 1. Análisis de calidad inicial (raw reads)
-mkdir -p 02_qc/illumina/raw 02_qc/illumina/trimmed 02_qc/nanopore
+# Crear enlaces simbólicos (evita duplicar datos)
+ln -s /ruta/absoluta/datos/sample_R1.fastq.gz 00_raw_data/illumina/
+ln -s /ruta/absoluta/datos/sample_R2.fastq.gz 00_raw_data/illumina/
+ln -s /ruta/absoluta/datos/sample_ont.fastq.gz 00_raw_data/nanopore/
+```
 
-# FastQC en datos crudos Illumina
-fastqc 00_raw_data/illumina/*.fastq.gz -o 02_qc/illumina/raw/ -t 8
+#### 1.2 Descargar Genoma de Referencia (Opcional)
 
-# NanoPlot para datos Nanopore (si aplica)
-NanoPlot --fastq 00_raw_data/nanopore/*.fastq.gz -o 02_qc/nanopore/ -t 8
+Para análisis de mapeo y detección de variantes:
 
-# 2. Limpieza y recorte de adaptadores con fastp (Illumina)
+```bash
+mkdir -p 01_reference
+
+# Ejemplo: Descargar E. coli K-12 MG1655 desde NCBI
+# Para otras bacterias, buscar en NCBI Genome: https://www.ncbi.nlm.nih.gov/genome/
+wget -O 01_reference/reference.fasta.gz \
+  "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/005/845/GCF_000005845.2_ASM584v2/GCF_000005845.2_ASM584v2_genomic.fna.gz"
+
+gunzip 01_reference/reference.fasta.gz
+```
+
+---
+
+### Fase 2: Control de Calidad (QC)
+
+#### 2.1 QC de Lecturas Illumina
+
+```bash
+conda activate bact_main
+
+# Crear directorios
+mkdir -p 02_qc/01_illumina_raw 02_qc/02_illumina_trimmed
+
+# FastQC en datos crudos
+fastqc 00_raw_data/illumina/*.fastq.gz \
+  -o 02_qc/01_illumina_raw/ \
+  -t 8
+
+# Limpieza y recorte con fastp
 fastp \
-  -i 00_raw_data/illumina/URO5550422_R1.fastq.gz \
-  -I 00_raw_data/illumina/URO5550422_R2.fastq.gz \
-  -o 02_qc/illumina/trimmed/URO5550422_R1_trimmed.fastq.gz \
-  -O 02_qc/illumina/trimmed/URO5550422_R2_trimmed.fastq.gz \
+  -i 00_raw_data/illumina/sample_R1.fastq.gz \
+  -I 00_raw_data/illumina/sample_R2.fastq.gz \
+  -o 02_qc/02_illumina_trimmed/sample_R1_trimmed.fastq.gz \
+  -O 02_qc/02_illumina_trimmed/sample_R2_trimmed.fastq.gz \
   --detect_adapter_for_pe \
   --cut_front --cut_tail \
   --trim_poly_g \
@@ -307,361 +398,364 @@ fastp \
   --n_base_limit 5 \
   --length_required 50 \
   --thread 8 \
-  --html 02_qc/illumina/trimmed/fastp_report.html \
-  --json 02_qc/illumina/trimmed/fastp_report.json
+  --html 02_qc/02_illumina_trimmed/fastp_report.html \
+  --json 02_qc/02_illumina_trimmed/fastp_report.json
 
-# 3. FastQC en datos limpios
-fastqc 02_qc/illumina/trimmed/*.fastq.gz -o 02_qc/illumina/trimmed/ -t 8
+# FastQC en datos limpios
+fastqc 02_qc/02_illumina_trimmed/*_trimmed.fastq.gz \
+  -o 02_qc/02_illumina_trimmed/ \
+  -t 8
+```
 
-# 4. Reporte consolidado con MultiQC
-multiqc 02_qc/ -o 02_qc/ --filename multiqc_report_complete
+**📊 Resultados QC Illumina**
 
-# 5. Filtrado de lecturas largas Nanopore (si aplica)
+_[Incluir aquí capturas de pantalla o estadísticas clave]_
+
+| Métrica | Raw Reads | Trimmed Reads |
+|---------|-----------|---------------|
+| Total Reads | | |
+| % Bases ≥Q30 | | |
+| GC Content (%) | | |
+| Duplicación (%) | | |
+| Adaptadores Detectados | | |
+
+---
+
+#### 2.2 QC de Lecturas Nanopore
+
+```bash
+conda activate bact_main
+
+# Crear directorios
+mkdir -p 02_qc/03_nanopore_raw 02_qc/04_nanopore_filtered
+
+# NanoPlot en datos crudos
+NanoPlot \
+  --fastq 00_raw_data/nanopore/sample_ont.fastq.gz \
+  -o 02_qc/03_nanopore_raw/ \
+  -t 8 \
+  --plots kde
+
+# Filtrado con Filtlong
 filtlong \
   --min_length 1000 \
   --keep_percent 90 \
   --target_bases 500000000 \
-  00_raw_data/nanopore/FRAN93.fastq.gz | \
-  pigz > 02_qc/nanopore/FRAN93_filtered.fastq.gz
+  00_raw_data/nanopore/sample_ont.fastq.gz | \
+  pigz > 02_qc/04_nanopore_filtered/sample_ont_filtered.fastq.gz
 
-# 6. Ejecutar mapeo con lecturas limpias
-# Indexar genoma de referencia (solo primera vez)
-bwa index 01_reference/ecoli_k12.fasta
+# NanoPlot en datos filtrados
+NanoPlot \
+  --fastq 02_qc/04_nanopore_filtered/sample_ont_filtered.fastq.gz \
+  -o 02_qc/04_nanopore_filtered/ \
+  -t 8 \
+  --plots kde
+```
 
-# Mapeo de lecturas Illumina limpias
-bwa mem -t 8 \
-  01_reference/ecoli_k12.fasta \
-  02_qc/illumina/trimmed/URO5550422_R1_trimmed.fastq.gz \
-  02_qc/illumina/trimmed/URO5550422_R2_trimmed.fastq.gz | \
-  samtools view -Sb - | \
-  samtools sort -@ 8 -o 03_mapping/URO5550422_sorted.bam
+**📊 Resultados QC Nanopore**
 
-# Indexar BAM
-samtools index 03_mapping/URO5550422_sorted.bam
+_[Incluir aquí gráficos de distribución de longitud y calidad]_
 
-# Mapeo de lecturas Nanopore (si aplica)
-minimap2 -ax map-ont -t 8 \
-  01_reference/ecoli_k12.fasta \
-  02_qc/nanopore/FRAN93_filtered.fastq.gz | \
-  samtools view -Sb - | \
-  samtools sort -@ 8 -o 03_mapping/FRAN93_sorted.bam
+| Métrica | Raw Reads | Filtered Reads |
+|---------|-----------|----------------|
+| Total Reads | | |
+| Mean Read Length (bp) | | |
+| Median Read Length (bp) | | |
+| Mean Quality Score | | |
+| N50 (bp) | | |
+| Total Bases (Gb) | | |
 
-samtools index 03_mapping/FRAN93_sorted.bam
+---
 
-# 7. Estadísticas de mapeo
-samtools flagstat 03_mapping/URO5550422_sorted.bam > 03_mapping/URO5550422_flagstat.txt
-samtools coverage 03_mapping/URO5550422_sorted.bam > 03_mapping/URO5550422_coverage.txt
+#### 2.3 Reporte Consolidado con MultiQC
 
-# 8. Ejecutar ensamblaje con lecturas limpias
-# Ensamblaje solo Illumina con SPAdes
+```bash
+conda activate bact_main
+
+mkdir -p 02_qc/05_multiqc
+
+# Generar reporte integrado
+multiqc 02_qc/ \
+  -o 02_qc/05_multiqc/ \
+  --filename multiqc_report_complete
+```
+
+**📊 Reporte MultiQC**
+
+_[Enlace a reporte HTML o capturas de pantalla clave]_
+
+---
+
+### Fase 3: Estrategias de Ensamblaje
+
+#### 3.1 Ensamblaje Solo Illumina (SPAdes)
+
+```bash
+conda activate bact_main
+
+mkdir -p 03_assembly/01_illumina_only
+
+# Ensamblaje con SPAdes
 spades.py \
-  -1 02_qc/illumina/trimmed/URO5550422_R1_trimmed.fastq.gz \
-  -2 02_qc/illumina/trimmed/URO5550422_R2_trimmed.fastq.gz \
-  -o 04_assembly/illumina_only/ \
+  -1 02_qc/02_illumina_trimmed/sample_R1_trimmed.fastq.gz \
+  -2 02_qc/02_illumina_trimmed/sample_R2_trimmed.fastq.gz \
+  -o 03_assembly/01_illumina_only/ \
   --careful \
   -t 8 -m 16
 
-# Ensamblaje solo Nanopore con Flye
+# Copiar contigs finales
+cp 03_assembly/01_illumina_only/contigs.fasta \
+   03_assembly/01_illumina_only/assembly_illumina.fasta
+```
+
+**📊 Estadísticas Ensamblaje Illumina**
+
+| Métrica | Valor |
+|---------|-------|
+| Número de Contigs | |
+| Tamaño Total del Ensamblaje (bp) | |
+| Contig Más Largo (bp) | |
+| N50 (bp) | |
+| L50 | |
+| GC Content (%) | |
+
+---
+
+#### 3.2 Ensamblaje Solo Nanopore (Flye)
+
+```bash
+conda activate bact_main
+
+mkdir -p 03_assembly/02_nanopore_only
+
+# Ensamblaje con Flye
 flye \
-  --nano-raw 02_qc/nanopore/FRAN93_filtered.fastq.gz \
-  --out-dir 04_assembly/nanopore_only/ \
+  --nano-raw 02_qc/04_nanopore_filtered/sample_ont_filtered.fastq.gz \
+  --out-dir 03_assembly/02_nanopore_only/ \
   --threads 8 \
   --genome-size 5m
 
-# Evaluación de calidad de ensamblajes
+# Copiar ensamblaje final
+cp 03_assembly/02_nanopore_only/assembly.fasta \
+   03_assembly/02_nanopore_only/assembly_nanopore.fasta
+```
+
+**📊 Estadísticas Ensamblaje Nanopore**
+
+| Métrica | Valor |
+|---------|-------|
+| Número de Contigs | |
+| Tamaño Total del Ensamblaje (bp) | |
+| Contig Más Largo (bp) | |
+| N50 (bp) | |
+| L50 | |
+| GC Content (%) | |
+| Circularidad Detectada | |
+
+---
+
+#### 3.3 Ensamblaje Híbrido (Unicycler)
+
+```bash
+conda activate bact_main
+
+mkdir -p 03_assembly/03_hybrid
+
+# Ensamblaje híbrido con Unicycler
+unicycler \
+  -1 02_qc/02_illumina_trimmed/sample_R1_trimmed.fastq.gz \
+  -2 02_qc/02_illumina_trimmed/sample_R2_trimmed.fastq.gz \
+  -l 02_qc/04_nanopore_filtered/sample_ont_filtered.fastq.gz \
+  -o 03_assembly/03_hybrid/ \
+  -t 8
+
+# Copiar ensamblaje final
+cp 03_assembly/03_hybrid/assembly.fasta \
+   03_assembly/03_hybrid/assembly_hybrid.fasta
+```
+
+**📊 Estadísticas Ensamblaje Híbrido**
+
+| Métrica | Valor |
+|---------|-------|
+| Número de Contigs | |
+| Tamaño Total del Ensamblaje (bp) | |
+| Contig Más Largo (bp) | |
+| N50 (bp) | |
+| L50 | |
+| GC Content (%) | |
+| Circularidad Detectada | |
+
+---
+
+#### 3.4 Evaluación Comparativa de Ensamblajes (QUAST)
+
+```bash
+conda activate bact_main
+
+mkdir -p 03_assembly/04_quast_evaluation
+
+# Evaluación con QUAST (con referencia)
 quast.py \
-  04_assembly/illumina_only/contigs.fasta \
-  04_assembly/nanopore_only/assembly.fasta \
-  -r 01_reference/ecoli_k12.fasta \
-  -o 04_assembly/quast_results/ \
-  --threads 8
+  03_assembly/01_illumina_only/assembly_illumina.fasta \
+  03_assembly/02_nanopore_only/assembly_nanopore.fasta \
+  03_assembly/03_hybrid/assembly_hybrid.fasta \
+  -r 01_reference/reference.fasta \
+  -o 03_assembly/04_quast_evaluation/ \
+  --threads 8 \
+  --labels "Illumina,Nanopore,Hybrid"
+
+# Si no tienes referencia, omite el parámetro -r
 ```
 
-### Para anotación genómica:
+**📊 Comparación de Ensamblajes (QUAST)**
 
-```bash
-mamba activate bact_amr
+_[Incluir tabla comparativa generada por QUAST]_
 
-# Crear directorio de anotación
-mkdir -p 06_annotation
+| Métrica | Illumina | Nanopore | Híbrido |
+|---------|----------|----------|---------|
+| Contigs (≥500 bp) | | | |
+| Tamaño Total (bp) | | | |
+| Contig Más Largo (bp) | | | |
+| N50 (bp) | | | |
+| L50 | | | |
+| GC (%) | | | |
+| Genes Predichos | | | |
+| % Genoma Cubierto | | | |
+| Mismatches por 100 kb | | | |
 
-# Anotar ensamblaje híbrido con Prokka
-prokka \
-  --outdir 06_annotation/prokka_hybrid/ \
-  --prefix ecoli_hybrid \
-  --kingdom Bacteria \
-  --genus Escherichia \
-  --species coli \
-  --strain sample_01 \
-  --gram neg \
-  --usegenus \
-  --addgenes \
-  --addmrna \
-  --rfam \
-  --cpus 8 \
-  04_assembly/unicycler_hybrid/assembly.fasta
+**🎯 Recomendación de Ensamblaje:**
 
-# Detectar genes AMR con Abricate (múltiples bases de datos)
-mkdir -p 05_amr_screening/abricate
-
-# CARD database
-abricate --db card \
-  04_assembly/unicycler_hybrid/assembly.fasta > \
-  05_amr_screening/abricate/card_results.tsv
-
-# ResFinder database
-abricate --db resfinder \
-  04_assembly/unicycler_hybrid/assembly.fasta > \
-  05_amr_screening/abricate/resfinder_results.tsv
-
-# NCBI database
-abricate --db ncbi \
-  04_assembly/unicycler_hybrid/assembly.fasta > \
-  05_amr_screening/abricate/ncbi_results.tsv
-
-# ARG-ANNOT database
-abricate --db argannot \
-  04_assembly/unicycler_hybrid/assembly.fasta > \
-  05_amr_screening/abricate/argannot_results.tsv
-
-# Resumen consolidado de Abricate
-abricate --summary 05_amr_screening/abricate/*.tsv > \
-  05_amr_screening/abricate/abricate_summary.tsv
-```
-
-### Para análisis AMR con RGI:
-
-```bash
-mamba activate bact_rgi
-
-# Crear directorio
-mkdir -p 05_amr_screening/rgi
-
-# Cargar base de datos CARD (primera vez)
-# Descargar última versión de CARD
-wget -O 05_amr_screening/rgi/card_data.tar.bz2 https://card.mcmaster.ca/latest/data
-tar -xvf 05_amr_screening/rgi/card_data.tar.bz2 -C 05_amr_screening/rgi/
-
-# Cargar base de datos local
-rgi load --card_json 05_amr_screening/rgi/card.json --local
-
-# Ejecutar análisis RGI
-rgi main \
-  --input_sequence 04_assembly/unicycler_hybrid/assembly.fasta \
-  --output_file 05_amr_screening/rgi/rgi_results \
-  --input_type contig \
-  --local \
-  --clean \
-  --num_threads 8
-
-# Generar visualizaciones
-rgi heatmap \
-  --input 05_amr_screening/rgi/rgi_results.txt \
-  --output 05_amr_screening/rgi/rgi_heatmap
-
-# Verificar versión de base de datos
-rgi database --version --local
-```
-
-### Para detección AMR con AMRFinderPlus:
-
-```bash
-mamba activate bact_main
-
-# Crear directorio
-mkdir -p 05_amr_screening/amrfinder
-
-# Verificar que la base de datos esté configurada
-amrfinder --database 05_amr_screening/amrfinder_db --list_organisms
-
-# Ejecutar AMRFinderPlus en el ensamblaje híbrido
-amrfinder \
-  --nucleotide 04_assembly/unicycler_hybrid/assembly.fasta \
-  --database 05_amr_screening/amrfinder_db \
-  --organism Escherichia \
-  --output 05_amr_screening/amrfinder/amrfinder_results.tsv \
-  --plus \
-  --name ecoli_hybrid \
-  --threads 8
-
-# Si también tienes archivo de proteínas predichas (de Prokka)
-amrfinder \
-  --protein 06_annotation/prokka_hybrid/ecoli_hybrid.faa \
-  --database 05_amr_screening/amrfinder_db \
-  --organism Escherichia \
-  --output 05_amr_screening/amrfinder/amrfinder_protein_results.tsv \
-  --plus \
-  --threads 8
-
-# Generar reporte resumido
-grep -v "^#" 05_amr_screening/amrfinder/amrfinder_results.tsv | \
-  cut -f5,6,7,9,11,12 | \
-  sort -u > 05_amr_screening/amrfinder/amrfinder_summary.txt
-
-# Si necesitas actualizar la base de datos
-amrfinder_update --database 05_amr_screening/amrfinder_db
-```
+_[Seleccionar el mejor ensamblaje basado en métricas QUAST]_
 
 ---
 
-## 🔧 Solución de Problemas Comunes
+### Fase 4: Mapeo y Análisis de Variantes
 
-### Error: "Could not solve for environment specs"
+#### 4.1 Mapeo de Lecturas Illumina
 
-**Causa**: Conflictos entre versiones de Perl, Python y bibliotecas compartidas (zlib, libzlib).
-
-**Solución**: 
-- ✅ Usar los tres ambientes separados como se describe arriba
-- ✅ No intentar instalar prokka, abricate y rgi en el mismo ambiente
-- ✅ Asegurarse de haber configurado los canales correctamente
-
-### Instalación muy lenta
-
-**Soluciones**:
-- Usar `mamba` en lugar de `conda` (hasta 10x más rápido)
-- Instalar herramientas en lotes pequeños como se muestra arriba
-- Verificar conexión a internet y acceso a los repositorios de conda-forge/bioconda
-
-### Conflictos al cambiar entre ambientes
-
-**Solución**:
 ```bash
-# Desactivar ambiente actual antes de cambiar
-conda deactivate
+conda activate bact_main
 
-# Activar nuevo ambiente
-mamba activate <nombre_ambiente>
+mkdir -p 04_mapping/01_illumina
+
+# Indexar referencia (solo primera vez)
+bwa index 01_reference/reference.fasta
+
+# Mapeo con BWA-MEM
+bwa mem -t 8 \
+  01_reference/reference.fasta \
+  02_qc/02_illumina_trimmed/sample_R1_trimmed.fastq.gz \
+  02_qc/02_illumina_trimmed/sample_R2_trimmed.fastq.gz | \
+  samtools view -Sb - | \
+  samtools sort -@ 8 -o 04_mapping/01_illumina/aligned_sorted.bam
+
+# Indexar BAM
+samtools index 04_mapping/01_illumina/aligned_sorted.bam
+
+# Estadísticas de mapeo
+samtools flagstat 04_mapping/01_illumina/aligned_sorted.bam > \
+  04_mapping/01_illumina/flagstat.txt
+
+samtools coverage 04_mapping/01_illumina/aligned_sorted.bam > \
+  04_mapping/01_illumina/coverage.txt
+
+samtools depth 04_mapping/01_illumina/aligned_sorted.bam | \
+  awk '{sum+=$3} END {print "Mean Depth:", sum/NR}' > \
+  04_mapping/01_illumina/mean_depth.txt
 ```
 
-### Base de datos de RGI no encontrada
+**📊 Estadísticas de Mapeo Illumina**
 
-**Solución**:
-```bash
-mamba activate bact_rgi
-
-# Descargar base de datos CARD (última versión)
-wget https://card.mcmaster.ca/latest/data
-tar -xvf data ./card.json
-
-# Cargar base de datos local
-rgi load --card_json ./card.json --local
-
-# Verificar carga
-rgi database --version --local
-```
-
-### Bases de datos desactualizadas
-
-**Para AMRFinderPlus**:
-```bash
-mamba activate bact_main
-amrfinder_update --database 05_amr_screening/amrfinder_db --force
-```
-
-**Para Abricate**:
-```bash
-mamba activate bact_amr
-abricate-get_db --db resfinder --force  # Actualizar base específica
-abricate --setupdb                       # Reindexar todas las bases
-```
+| Métrica | Valor |
+|---------|-------|
+| Total Reads | |
+| Reads Mapeadas (%) | |
+| Reads Paired (%) | |
+| Cobertura Media | |
+| Duplicados (%) | |
 
 ---
 
-## 📊 Resumen de Herramientas por Ambiente
-
-### 🧬 `bact_main` (Pipeline Principal)
-
-| Categoría | Herramientas |
-|-----------|--------------|
-| **QC** | FastQC, MultiQC, Fastp, NanoPlot, Filtlong |
-| **Mapeo** | BWA, Minimap2, Samtools, BCFtools, BEDtools |
-| **Ensamblaje** | Unicycler, Flye, SPAdes, QUAST, Bandage |
-| **AMR** | AMRFinderPlus, Barrnap, BLAST |
-| **Utilidades** | Python 3.10, pigz, OpenJDK 11 |
-
-### 🦠 `bact_amr` (Anotación y AMR)
-
-| Categoría | Herramientas |
-|-----------|--------------|
-| **Anotación** | Prokka (con tbl2asn, barrnap, prodigal) |
-| **AMR** | Abricate (CARD, ResFinder, NCBI, ARG-ANNOT, etc.) |
-| **Utilidades** | Python 3.9, Perl con módulos específicos |
-
-### 🧪 `bact_rgi` (AMR Avanzado)
-
-| Categoría | Herramientas |
-|-----------|--------------|
-| **AMR** | RGI (Resistance Gene Identifier) + CARD database |
-| **Utilidades** | Python 3.11, BLAST 2.16.0, KMA, Samtools 1.21 |
-
----
-
-## 💡 Recomendaciones Adicionales
-
-### Script wrapper para automatización
-
-Puedes crear un script que cambie automáticamente entre ambientes según la tarea:
+#### 4.2 Mapeo de Lecturas Nanopore
 
 ```bash
-#!/bin/bash
-# run_pipeline.sh
+conda activate bact_main
 
-echo "🧬 Iniciando pipeline de análisis E. coli..."
+mkdir -p 04_mapping/02_nanopore
 
-# Paso 1: Control de Calidad
-echo "📊 Paso 1: Control de Calidad"
-mamba run -n bact_main bash scripts/01_qc.sh
+# Mapeo con Minimap2
+minimap2 -ax map-ont -t 8 \
+  01_reference/reference.fasta \
+  02_qc/04_nanopore_filtered/sample_ont_filtered.fastq.gz | \
+  samtools view -Sb - | \
+  samtools sort -@ 8 -o 04_mapping/02_nanopore/aligned_sorted.bam
 
-# Paso 2: Ensamblaje
-echo "🔧 Paso 2: Ensamblaje"
-mamba run -n bact_main bash scripts/02_assembly.sh
+# Indexar BAM
+samtools index 04_mapping/02_nanopore/aligned_sorted.bam
 
-# Paso 3: Anotación
-echo "📝 Paso 3: Anotación con Prokka"
-mamba run -n bact_amr bash scripts/03_annotation.sh
+# Estadísticas
+samtools flagstat 04_mapping/02_nanopore/aligned_sorted.bam > \
+  04_mapping/02_nanopore/flagstat.txt
 
-# Paso 4: Detección AMR
-echo "🦠 Paso 4: Detección de genes AMR"
-mamba run -n bact_main bash scripts/04_amrfinder.sh
-mamba run -n bact_amr bash scripts/05_abricate.sh
-mamba run -n bact_rgi bash scripts/06_rgi.sh
-
-echo "✅ Pipeline completado exitosamente!"
+samtools coverage 04_mapping/02_nanopore/aligned_sorted.bam > \
+  04_mapping/02_nanopore/coverage.txt
 ```
 
-### Alternativas a herramientas problemáticas
+**📊 Estadísticas de Mapeo Nanopore**
 
-Si encuentras problemas persistentes, considera estas alternativas modernas:
-
-| Herramienta | Alternativa | Ventaja |
-|-------------|-------------|---------|
-| Prokka | **Bakta** | Más rápido, mejor anotación, más actualizado |
-| RGI | **AMRFinderPlus** | Oficial NCBI, más estable, ya instalado |
-| Abricate | **AMRFinderPlus** | Integración nativa con NCBI, mejor curación |
+| Métrica | Valor |
+|---------|-------|
+| Total Reads | |
+| Reads Mapeadas (%) | |
+| Cobertura Media | |
 
 ---
 
-## 📚 Referencias y Recursos
+#### 4.3 Llamado de Variantes y Consenso
 
-- **Conda/Mamba**: [https://mamba.readthedocs.io/](https://mamba.readthedocs.io/)
-- **Bioconda**: [https://bioconda.github.io/](https://bioconda.github.io/)
-- **Prokka**: [https://github.com/tseemann/prokka](https://github.com/tseemann/prokka)
-- **Abricate**: [https://github.com/tseemann/abricate](https://github.com/tseemann/abricate)
-- **RGI/CARD**: [https://card.mcmaster.ca/](https://card.mcmaster.ca/)
-- **AMRFinderPlus**: [https://www.ncbi.nlm.nih.gov/pathogens/antimicrobial-resistance/AMRFinder/](https://www.ncbi.nlm.nih.gov/pathogens/antimicrobial-resistance/AMRFinder/)
-- **SPAdes**: [https://github.com/ablab/spades](https://github.com/ablab/spades)
-- **Unicycler**: [https://github.com/rrwick/Unicycler](https://github.com/rrwick/Unicycler)
+```bash
+conda activate bact_main
+
+mkdir -p 04_mapping/03_variants
+
+# Llamado de variantes Illumina
+bcftools mpileup -Ou -f 01_reference/reference.fasta \
+  04_mapping/01_illumina/aligned_sorted.bam | \
+  bcftools call -mv -Oz -o 04_mapping/03_variants/illumina_variants.vcf.gz
+
+bcftools index 04_mapping/03_variants/illumina_variants.vcf.gz
+
+# Llamado de variantes Nanopore
+bcftools mpileup -Ou -f 01_reference/reference.fasta \
+  04_mapping/02_nanopore/aligned_sorted.bam | \
+  bcftools call -mv -Oz -o 04_mapping/03_variants/nanopore_variants.vcf.gz
+
+bcftools index 04_mapping/03_variants/nanopore_variants.vcf.gz
+
+# Generar secuencia consenso (Illumina)
+bcftools consensus -f 01_reference/reference.fasta \
+  04_mapping/03_variants/illumina_variants.vcf.gz > \
+  04_mapping/03_variants/consensus_illumina.fasta
+
+# Estadísticas de variantes
+bcftools stats 04_mapping/03_variants/illumina_variants.vcf.gz > \
+  04_mapping/03_variants/illumina_variants_stats.txt
+
+bcftools stats 04_mapping/03_variants/nanopore_variants.vcf.gz > \
+  04_mapping/03_variants/nanopore_variants_stats.txt
+```
+
+**📊 Variantes Detectadas**
+
+| Tipo de Variante | Illumina | Nanopore |
+|------------------|----------|----------|
+| SNPs | | |
+| INDELs | | |
+| Variantes en Genes | | |
 
 ---
 
-## 📝 Licencia
+### Fase 5: Anotación Funcional
 
-Este proyecto está bajo la licencia MIT. Ver `LICENSE` para más detalles.
-
-## 👥 Contribuciones
-
-Las contribuciones son bienvenidas. Por favor, abre un issue o pull request para sugerencias o mejoras.
-
-## ✉️ Contacto
-
-Para preguntas o colaboraciones, contactar a [tu email/institución].
+#### 5.1 Anotación con Prok
