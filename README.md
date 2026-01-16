@@ -1408,3 +1408,766 @@ bash scripts/utils/analyze_coverage_per_sequence.sh \
   04_mapping/04_coverage_analysis/illumina
 
 echo "✓ Mapeo
+
+
+# README.md - Parte 3: Anotación, Detección AMR y Tipificación
+
+## Fase 4: Mapeo y Análisis de Variantes (Continuación)
+
+### 4.3 Mapeo de Lecturas Nanopore
+
+```bash
+conda activate bact_main
+
+mkdir -p 04_mapping/02_nanopore
+
+SAMPLE="URO5550422"
+REFERENCE="01_reference/reference.fasta"
+NANOPORE_FILT="02_qc/04_nanopore_filtered/${SAMPLE}_ont_filtered.fastq.gz"
+THREADS=8
+
+echo "========================================"
+echo "Mapeo Nanopore - Muestra: ${SAMPLE}"
+echo "Inicio: $(date)"
+echo "========================================"
+
+# Mapeo con Minimap2
+echo "[1/4] Mapeo con Minimap2..."
+minimap2 -ax map-ont -t ${THREADS} \
+  ${REFERENCE} \
+  ${NANOPORE_FILT} | \
+  samtools view -Sb - | \
+  samtools sort -@ ${THREADS} -o 04_mapping/02_nanopore/aligned_sorted.bam
+
+# Indexar BAM
+echo "[2/4] Indexando BAM..."
+samtools index 04_mapping/02_nanopore/aligned_sorted.bam
+
+# Estadísticas
+echo "[3/4] Calculando estadísticas..."
+samtools flagstat 04_mapping/02_nanopore/aligned_sorted.bam > \
+  04_mapping/02_nanopore/flagstat.txt
+
+samtools coverage 04_mapping/02_nanopore/aligned_sorted.bam > \
+  04_mapping/02_nanopore/coverage.txt
+
+samtools depth 04_mapping/02_nanopore/aligned_sorted.bam | \
+  awk '{sum+=$3; count++} END {print "Mean Depth:", sum/count}' > \
+  04_mapping/02_nanopore/mean_depth.txt
+
+# Análisis por secuencia
+echo "[4/4] Análisis de cobertura por secuencia..."
+bash scripts/utils/analyze_coverage_per_sequence.sh \
+  04_mapping/02_nanopore/aligned_sorted.bam \
+  04_mapping/04_coverage_analysis/nanopore
+
+echo "✓ Mapeo Nanopore completado"
+echo "  Fin: $(date)"
+
+# Mostrar resumen
+cat 04_mapping/02_nanopore/flagstat.txt
+echo ""
+cat 04_mapping/04_coverage_analysis/nanopore/coverage_summary.txt
+```
+
+**📊 Comparar Cobertura Illumina vs Nanopore**:
+
+```bash
+echo "=== COMPARACIÓN DE COBERTURA POR SECUENCIA ==="
+echo ""
+echo "ILLUMINA:"
+cat 04_mapping/04_coverage_analysis/illumina/coverage_summary.txt
+echo ""
+echo "NANOPORE:"
+cat 04_mapping/04_coverage_analysis/nanopore/coverage_summary.txt
+```
+
+---
+
+### 4.4 Llamado de Variantes
+
+#### Variantes de Lecturas Illumina
+
+```bash
+conda activate bact_main
+
+mkdir -p 04_mapping/03_variants
+
+SAMPLE="URO5550422"
+REFERENCE="01_reference/reference.fasta"
+BAM_ILLUMINA="04_mapping/01_illumina/aligned_sorted.bam"
+
+echo "========================================"
+echo "Llamado de Variantes - Illumina"
+echo "========================================"
+
+# Llamado de variantes con BCFtools
+echo "[1/3] Generando pileup..."
+bcftools mpileup -Ou -f ${REFERENCE} ${BAM_ILLUMINA} | \
+  bcftools call -mv -Oz -o 04_mapping/03_variants/${SAMPLE}_illumina_variants.vcf.gz
+
+# Indexar VCF
+echo "[2/3] Indexando VCF..."
+bcftools index 04_mapping/03_variants/${SAMPLE}_illumina_variants.vcf.gz
+
+# Estadísticas de variantes
+echo "[3/3] Generando estadísticas..."
+bcftools stats 04_mapping/03_variants/${SAMPLE}_illumina_variants.vcf.gz > \
+  04_mapping/03_variants/${SAMPLE}_illumina_variants_stats.txt
+
+# Filtrar variantes de alta calidad
+bcftools view -i 'QUAL>=30 && DP>=10' \
+  04_mapping/03_variants/${SAMPLE}_illumina_variants.vcf.gz | \
+  bcftools view -Oz -o 04_mapping/03_variants/${SAMPLE}_illumina_variants_filtered.vcf.gz
+
+bcftools index 04_mapping/03_variants/${SAMPLE}_illumina_variants_filtered.vcf.gz
+
+echo "✓ Llamado de variantes Illumina completado"
+
+# Resumen de variantes
+echo ""
+echo "=== RESUMEN DE VARIANTES ==="
+bcftools stats 04_mapping/03_variants/${SAMPLE}_illumina_variants_filtered.vcf.gz | \
+  grep "^SN" | grep -E "SNPs|indels|MNPs"
+```
+
+#### Variantes de Lecturas Nanopore
+
+```bash
+conda activate bact_main
+
+SAMPLE="URO5550422"
+REFERENCE="01_reference/reference.fasta"
+BAM_NANOPORE="04_mapping/02_nanopore/aligned_sorted.bam"
+
+echo "========================================"
+echo "Llamado de Variantes - Nanopore"
+echo "========================================"
+
+# Llamado de variantes
+bcftools mpileup -Ou -f ${REFERENCE} ${BAM_NANOPORE} | \
+  bcftools call -mv -Oz -o 04_mapping/03_variants/${SAMPLE}_nanopore_variants.vcf.gz
+
+bcftools index 04_mapping/03_variants/${SAMPLE}_nanopore_variants.vcf.gz
+
+# Estadísticas
+bcftools stats 04_mapping/03_variants/${SAMPLE}_nanopore_variants.vcf.gz > \
+  04_mapping/03_variants/${SAMPLE}_nanopore_variants_stats.txt
+
+echo "✓ Llamado de variantes Nanopore completado"
+```
+
+#### Generar Secuencia Consenso
+
+```bash
+conda activate bact_main
+
+SAMPLE="URO5550422"
+REFERENCE="01_reference/reference.fasta"
+
+echo "========================================"
+echo "Generando Secuencia Consenso"
+echo "========================================"
+
+# Consenso basado en variantes Illumina (mayor precisión)
+bcftools consensus -f ${REFERENCE} \
+  04_mapping/03_variants/${SAMPLE}_illumina_variants_filtered.vcf.gz > \
+  04_mapping/03_variants/${SAMPLE}_consensus_illumina.fasta
+
+echo "✓ Secuencia consenso generada"
+echo "  Archivo: 04_mapping/03_variants/${SAMPLE}_consensus_illumina.fasta"
+```
+
+**📊 Tipos de Variantes Detectadas**:
+
+| Tipo | Illumina | Nanopore | Confianza |
+|------|----------|----------|-----------|
+| SNPs | Alto | Bajo | Mayor en Illumina |
+| INDELs pequeños (<50bp) | Alto | Medio | Validar ambos |
+| INDELs grandes (>50bp) | Bajo | Alto | Mayor en Nanopore |
+| Variantes estructurales | No detecta | Sí detecta | Nanopore único |
+
+---
+
+## Fase 5: Anotación Funcional
+
+### 5.1 Anotación con Prokka
+
+```bash
+conda activate bact_amr
+
+mkdir -p 05_annotation/01_prokka
+
+SAMPLE="URO5550422"
+ASSEMBLY="03_assembly/BEST_ASSEMBLY.fasta"  # Usar mejor ensamblaje (híbrido)
+THREADS=8
+
+echo "========================================"
+echo "Anotación con Prokka"
+echo "Muestra: ${SAMPLE}"
+echo "Inicio: $(date)"
+echo "========================================"
+
+# Anotar genoma
+prokka \
+  --outdir 05_annotation/01_prokka/ \
+  --prefix ${SAMPLE} \
+  --kingdom Bacteria \
+  --genus Klebsiella \
+  --species pneumoniae \
+  --strain ${SAMPLE} \
+  --gram neg \
+  --usegenus \
+  --addgenes \
+  --addmrna \
+  --rfam \
+  --cpus ${THREADS} \
+  ${ASSEMBLY}
+
+echo ""
+echo "✓ Anotación Prokka completada"
+echo "  Fin: $(date)"
+
+# Mostrar resumen
+echo ""
+echo "=== RESUMEN DE ANOTACIÓN ==="
+cat 05_annotation/01_prokka/${SAMPLE}.txt
+```
+
+**📊 Archivos Generados por Prokka**:
+
+| Archivo | Descripción | Uso |
+|---------|-------------|-----|
+| `*.gff` | Anotaciones en formato GFF3 | Visualización en genome browsers |
+| `*.gbk` | Formato GenBank | Análisis filogenético |
+| `*.faa` | Secuencias proteicas | Búsqueda de homología |
+| `*.ffn` | Secuencias de genes (DNA) | Análisis de expresión |
+| `*.fna` | Secuencias de contigs | Secuencia anotada |
+| `*.txt` | Resumen estadístico | Reporte rápido |
+
+**🔍 Análisis del Resumen**:
+
+```bash
+SAMPLE="URO5550422"
+
+echo "=== ESTADÍSTICAS DE ANOTACIÓN ==="
+grep "CDS" 05_annotation/01_prokka/${SAMPLE}.txt
+grep "rRNA" 05_annotation/01_prokka/${SAMPLE}.txt
+grep "tRNA" 05_annotation/01_prokka/${SAMPLE}.txt
+grep "tmRNA" 05_annotation/01_prokka/${SAMPLE}.txt
+
+echo ""
+echo "=== GENES TOTALES ==="
+grep -c "CDS" 05_annotation/01_prokka/${SAMPLE}.gff
+
+echo ""
+echo "=== GENES CON FUNCIÓN ASIGNADA ==="
+grep "CDS" 05_annotation/01_prokka/${SAMPLE}.gff | grep -v "hypothetical" | wc -l
+
+echo ""
+echo "=== GENES HIPOTÉTICOS ==="
+grep "hypothetical protein" 05_annotation/01_prokka/${SAMPLE}.gff | wc -l
+```
+
+**📊 Valores Esperados para K. pneumoniae**:
+
+| Característica | Cantidad Esperada |
+|----------------|-------------------|
+| Genes (CDS) | 5,000 - 5,500 |
+| rRNA | 7-9 (3 operones x 3) |
+| tRNA | 75-85 |
+| tmRNA | 1 |
+| CRISPR arrays | 0-3 |
+| Genes con función | 70-80% |
+| Genes hipotéticos | 20-30% |
+
+---
+
+### 5.2 Anotación con Bakta (Alternativa Moderna - Opcional)
+
+```bash
+conda activate bact_main
+
+# Nota: Bakta requiere base de datos grande (~30 GB)
+# Descarga solo si tienes espacio y tiempo
+
+# Descargar base de datos (solo primera vez)
+# mkdir -p 05_annotation/bakta_db
+# bakta_db download --output 05_annotation/bakta_db --type full
+
+SAMPLE="URO5550422"
+ASSEMBLY="03_assembly/BEST_ASSEMBLY.fasta"
+THREADS=8
+
+echo "========================================"
+echo "Anotación con Bakta (Opcional)"
+echo "========================================"
+
+# Anotar con Bakta
+bakta \
+  --db 05_annotation/bakta_db \
+  --output 05_annotation/02_bakta/ \
+  --prefix ${SAMPLE} \
+  --locus-tag ${SAMPLE} \
+  --threads ${THREADS} \
+  --genus Klebsiella \
+  --species pneumoniae \
+  --strain ${SAMPLE} \
+  ${ASSEMBLY}
+
+echo "✓ Anotación Bakta completada"
+```
+
+**💡 Bakta vs Prokka**:
+
+| Característica | Prokka | Bakta |
+|----------------|--------|-------|
+| Velocidad | Rápido (15-30 min) | Moderado (30-60 min) |
+| Base de datos | RefSeq | UniProt + RefSeq |
+| Actualización | Estática | Regular |
+| Calidad anotación | Buena | Excelente |
+| Espacio en disco | ~1 GB | ~30 GB |
+| **Recomendación** | Rutina | Publicación |
+
+---
+
+## Fase 6: Detección de Genes de Resistencia Antimicrobiana (AMR)
+
+### 6.1 AMRFinderPlus (NCBI - Recomendado)
+
+```bash
+conda activate bact_main
+
+mkdir -p 06_amr_screening/01_amrfinder
+
+SAMPLE="URO5550422"
+ASSEMBLY="03_assembly/BEST_ASSEMBLY.fasta"
+PROTEINS="05_annotation/01_prokka/${SAMPLE}.faa"
+DB_PATH="06_amr_screening/amrfinder_db"
+THREADS=8
+
+echo "========================================"
+echo "Detección AMR - AMRFinderPlus"
+echo "Muestra: ${SAMPLE}"
+echo "Inicio: $(date)"
+echo "========================================"
+
+# Verificar y actualizar base de datos
+echo "[1/3] Verificando base de datos..."
+amrfinder_update --database ${DB_PATH}
+
+# Ejecutar AMRFinderPlus en nucleótidos (ensamblaje)
+echo "[2/3] Buscando genes AMR en ensamblaje..."
+amrfinder \
+  --nucleotide ${ASSEMBLY} \
+  --database ${DB_PATH} \
+  --organism Klebsiella \
+  --output 06_amr_screening/01_amrfinder/${SAMPLE}_amrfinder_nucleotide.tsv \
+  --plus \
+  --name ${SAMPLE} \
+  --threads ${THREADS}
+
+# Ejecutar AMRFinderPlus en proteínas (mayor sensibilidad)
+echo "[3/3] Buscando genes AMR en proteínas..."
+amrfinder \
+  --protein ${PROTEINS} \
+  --database ${DB_PATH} \
+  --organism Klebsiella \
+  --output 06_amr_screening/01_amrfinder/${SAMPLE}_amrfinder_protein.tsv \
+  --plus \
+  --threads ${THREADS}
+
+echo ""
+echo "✓ AMRFinderPlus completado"
+echo "  Fin: $(date)"
+
+# Generar resumen
+echo ""
+echo "=== RESUMEN DE GENES AMR ==="
+echo "Genes AMR detectados (proteínas):"
+grep -v "^#" 06_amr_screening/01_amrfinder/${SAMPLE}_amrfinder_protein.tsv | wc -l
+
+echo ""
+echo "Por clase de antibiótico:"
+grep -v "^#" 06_amr_screening/01_amrfinder/${SAMPLE}_amrfinder_protein.tsv | \
+  cut -f11 | sort | uniq -c | sort -rn
+```
+
+**📊 Interpretar Resultados de AMRFinderPlus**:
+
+```bash
+SAMPLE="URO5550422"
+RESULT_FILE="06_amr_screening/01_amrfinder/${SAMPLE}_amrfinder_protein.tsv"
+
+# Crear resumen legible
+cat > 06_amr_screening/01_amrfinder/${SAMPLE}_amrfinder_summary.txt << EOF
+# Resumen AMRFinderPlus - ${SAMPLE}
+# Generado: $(date)
+
+=== GENES AMR POR CLASE DE ANTIBIÓTICO ===
+EOF
+
+# Agrupar por clase
+grep -v "^#" ${RESULT_FILE} | \
+  awk -F'\t' '{print $11}' | \
+  sort | uniq -c | sort -rn >> \
+  06_amr_screening/01_amrfinder/${SAMPLE}_amrfinder_summary.txt
+
+cat >> 06_amr_screening/01_amrfinder/${SAMPLE}_amrfinder_summary.txt << EOF
+
+=== GENES AMR DE ALTA CONFIANZA (>95% identidad, >95% cobertura) ===
+EOF
+
+grep -v "^#" ${RESULT_FILE} | \
+  awk -F'\t' '($9 >= 95 && $10 >= 95) {printf "%-20s %-30s %5.1f%% %5.1f%%\n", $6, $11, $9, $10}' >> \
+  06_amr_screening/01_amrfinder/${SAMPLE}_amrfinder_summary.txt
+
+echo ""
+cat 06_amr_screening/01_amrfinder/${SAMPLE}_amrfinder_summary.txt
+```
+
+**🎯 Genes AMR Importantes en K. pneumoniae**:
+
+| Gen | Clase Antibiótico | Impacto Clínico | Localización Típica |
+|-----|-------------------|-----------------|---------------------|
+| **blaKPC** | Carbapenems | 🚨 CRÍTICO | Plásmido |
+| **blaNDM** | Carbapenems | 🚨 CRÍTICO | Plásmido |
+| **blaOXA-48** | Carbapenems | 🚨 CRÍTICO | Plásmido |
+| **blaCTX-M** | Cefalosporinas | ⚠️ ALTO | Plásmido |
+| **blaSHV** | β-lactámicos | ⚠️ ALTO | Cromosoma/Plásmido |
+| **blaTEM** | β-lactámicos | ⚠️ ALTO | Plásmido |
+| **qnr** | Quinolonas | ⚠️ MEDIO | Plásmido |
+| **aac(6')-Ib** | Aminoglicósidos | ⚠️ MEDIO | Plásmido |
+| **fosA** | Fosfomicina | ℹ️ BAJO | Cromosoma |
+| **oqxAB** | Quinolonas | ℹ️ BAJO | Cromosoma |
+
+---
+
+### 6.2 Abricate (Múltiples Bases de Datos)
+
+```bash
+conda activate bact_amr
+
+mkdir -p 06_amr_screening/02_abricate
+
+SAMPLE="URO5550422"
+ASSEMBLY="03_assembly/BEST_ASSEMBLY.fasta"
+
+echo "========================================"
+echo "Detección AMR - Abricate"
+echo "Múltiples bases de datos"
+echo "========================================"
+
+# Lista de bases de datos a usar
+DATABASES=("card" "resfinder" "ncbi" "argannot" "megares")
+
+for DB in "${DATABASES[@]}"; do
+    echo "[Ejecutando contra: $DB]"
+    abricate --db $DB \
+      ${ASSEMBLY} > \
+      06_amr_screening/02_abricate/${SAMPLE}_${DB}_results.tsv
+done
+
+# Generar resumen consolidado
+echo ""
+echo "Generando resumen consolidado..."
+abricate --summary 06_amr_screening/02_abricate/${SAMPLE}_*_results.tsv > \
+  06_amr_screening/02_abricate/${SAMPLE}_abricate_summary.tsv
+
+echo "✓ Abricate completado"
+echo ""
+
+# Mostrar resumen
+echo "=== RESUMEN POR BASE DE DATOS ==="
+for DB in "${DATABASES[@]}"; do
+    COUNT=$(grep -v "^#" 06_amr_screening/02_abricate/${SAMPLE}_${DB}_results.tsv | wc -l)
+    echo "$DB: $COUNT genes detectados"
+done
+```
+
+**📊 Comparación de Bases de Datos**:
+
+| Base de Datos | Enfoque | Ventajas | Uso Recomendado |
+|---------------|---------|----------|-----------------|
+| **CARD** | Completo, mecanismos | Anotaciones detalladas | Primera opción |
+| **ResFinder** | Clínico | Validado experimentalmente | Confirmación |
+| **NCBI** | Amplio | Actualizado regularmente | Screening general |
+| **ARG-ANNOT** | Histórico | Cobertura amplia | Genes raros |
+| **MEGARes** | Metagenomas | Diversidad alta | Ambiental |
+
+---
+
+### 6.3 RGI (CARD - Análisis Avanzado)
+
+```bash
+conda activate bact_rgi
+
+mkdir -p 06_amr_screening/03_rgi
+
+SAMPLE="URO5550422"
+ASSEMBLY="03_assembly/BEST_ASSEMBLY.fasta"
+THREADS=8
+
+echo "========================================"
+echo "Detección AMR - RGI (CARD)"
+echo "========================================"
+
+# Verificar base de datos CARD
+echo "[1/3] Verificando base de datos CARD..."
+rgi database --version --local
+
+# Ejecutar análisis RGI
+echo "[2/3] Ejecutando RGI..."
+rgi main \
+  --input_sequence ${ASSEMBLY} \
+  --output_file 06_amr_screening/03_rgi/${SAMPLE}_rgi \
+  --input_type contig \
+  --local \
+  --clean \
+  --alignment_tool BLAST \
+  --include_loose \
+  --num_threads ${THREADS}
+
+# Generar heatmap
+echo "[3/3] Generando heatmap..."
+rgi heatmap \
+  --input 06_amr_screening/03_rgi/${SAMPLE}_rgi.txt \
+  --output 06_amr_screening/03_rgi/${SAMPLE}_rgi_heatmap \
+  --category drug_class \
+  --cluster both
+
+echo ""
+echo "✓ RGI completado"
+echo "  Resultados: 06_amr_screening/03_rgi/${SAMPLE}_rgi.txt"
+echo "  Heatmap: 06_amr_screening/03_rgi/${SAMPLE}_rgi_heatmap.png"
+
+# Resumen de genes
+echo ""
+echo "=== RESUMEN RGI ==="
+echo "Genes AMR detectados:"
+grep -v "^ORF" 06_amr_screening/03_rgi/${SAMPLE}_rgi.txt | wc -l
+
+echo ""
+echo "Por categoría de detección:"
+tail -n +2 06_amr_screening/03_rgi/${SAMPLE}_rgi.txt | \
+  cut -f6 | sort | uniq -c
+```
+
+**🔍 Categorías de Detección RGI**:
+
+| Categoría | Criterios | Interpretación |
+|-----------|-----------|----------------|
+| **Perfect** | 100% identidad, 100% cobertura | Alta confianza |
+| **Strict** | >95% identidad, >95% cobertura | Confianza alta |
+| **Loose** | >60% identidad, >60% cobertura | Revisar manualmente |
+
+---
+
+### 6.4 Consolidación de Resultados AMR
+
+```bash
+conda activate bact_main
+
+SAMPLE="URO5550422"
+
+echo "========================================"
+echo "Consolidando Resultados AMR"
+echo "========================================"
+
+# Crear script Python para consolidar
+cat > 06_amr_screening/consolidate_amr.py << 'EOFPYTHON'
+#!/usr/bin/env python3
+import pandas as pd
+import sys
+
+sample = sys.argv[1]
+
+print(f"Consolidando resultados AMR para {sample}")
+
+# Leer AMRFinderPlus
+amrf = pd.read_csv(f'06_amr_screening/01_amrfinder/{sample}_amrfinder_protein.tsv', 
+                   sep='\t', comment='#')
+amrf_genes = set(amrf['Gene symbol'].dropna())
+
+# Leer Abricate CARD
+abr = pd.read_csv(f'06_amr_screening/02_abricate/{sample}_card_results.tsv', 
+                  sep='\t')
+abr_genes = set(abr['GENE'].dropna())
+
+# Leer RGI
+rgi = pd.read_csv(f'06_amr_screening/03_rgi/{sample}_rgi.txt', sep='\t')
+rgi_genes = set(rgi['Best_Hit_ARO'].dropna())
+
+# Genes consenso (detectados por ≥2 herramientas)
+all_genes = amrf_genes | abr_genes | rgi_genes
+consensus = set()
+
+for gene in all_genes:
+    count = 0
+    if gene in amrf_genes: count += 1
+    if gene in abr_genes: count += 1
+    if gene in rgi_genes: count += 1
+    
+    if count >= 2:
+        consensus.add(gene)
+
+print(f"\n=== RESUMEN DE DETECCIÓN ===")
+print(f"AMRFinderPlus: {len(amrf_genes)} genes")
+print(f"Abricate (CARD): {len(abr_genes)} genes")
+print(f"RGI: {len(rgi_genes)} genes")
+print(f"\nGenes de ALTA CONFIANZA (≥2 herramientas): {len(consensus)}")
+print("\nGenes consenso:")
+for gene in sorted(consensus):
+    print(f"  - {gene}")
+
+# Guardar resultados
+with open(f'06_amr_screening/{sample}_amr_consensus.txt', 'w') as f:
+    f.write(f"# Genes AMR de Alta Confianza - {sample}\n")
+    f.write(f"# Detectados por ≥2 herramientas\n\n")
+    for gene in sorted(consensus):
+        f.write(f"{gene}\n")
+
+print(f"\n✓ Resultados guardados en: 06_amr_screening/{sample}_amr_consensus.txt")
+EOFPYTHON
+
+# Ejecutar consolidación
+python3 06_amr_screening/consolidate_amr.py ${SAMPLE}
+```
+
+---
+
+## Fase 7: Tipificación Molecular
+
+### 7.1 MLST (Multi-Locus Sequence Typing)
+
+```bash
+conda activate bact_main
+
+mkdir -p 07_typing/mlst
+
+SAMPLE="URO5550422"
+ASSEMBLY="03_assembly/BEST_ASSEMBLY.fasta"
+
+echo "========================================"
+echo "MLST Typing"
+echo "Muestra: ${SAMPLE}"
+echo "========================================"
+
+# Ejecutar MLST
+mlst --scheme kpneumoniae ${ASSEMBLY} > 07_typing/mlst/${SAMPLE}_mlst.txt
+
+echo "✓ MLST completado"
+echo ""
+
+# Mostrar resultado
+cat 07_typing/mlst/${SAMPLE}_mlst.txt
+
+# Extraer ST
+ST=$(awk '{print $3}' 07_typing/mlst/${SAMPLE}_mlst.txt)
+echo ""
+echo "=== SEQUENCE TYPE (ST) ==="
+echo "ST: ${ST}"
+
+# Información adicional del ST (buscar en base de datos)
+echo ""
+echo "Para más información sobre este ST, visita:"
+echo "https://bigsdb.pasteur.fr/klebsiella/klebsiella.html"
+```
+
+**📊 STs Comunes en K. pneumoniae**:
+
+| ST | Características | Relevancia Clínica |
+|----|-----------------|-------------------|
+| **ST258** | Productor de KPC | Alta mortalidad, brotes hospitalarios |
+| **ST11** | MDR, productor de carbapenemasas | Pandémico |
+| **ST15** | Productor de CTX-M | Altamente virulento |
+| **ST23** | Hipervirulento (hvKp) | Infecciones invasivas |
+| **ST101** | Productor de NDM | Emergente |
+
+---
+
+### 7.2 Detección de Plásmidos
+
+```bash
+conda activate bact_main
+
+mkdir -p 07_typing/plasmids
+
+SAMPLE="URO5550422"
+ASSEMBLY="03_assembly/BEST_ASSEMBLY.fasta"
+
+echo "========================================"
+echo "Detección de Plásmidos"
+echo "========================================"
+
+# Usar Abricate con base de datos PlasmidFinder
+conda activate bact_amr
+
+abricate --db plasmidfinder \
+  ${ASSEMBLY} > \
+  07_typing/plasmids/${SAMPLE}_plasmidfinder.tsv
+
+echo "✓ PlasmidFinder completado"
+echo ""
+
+# Mostrar resultados
+echo "=== PLÁSMIDOS DETECTADOS ==="
+grep -v "^#" 07_typing/plasmids/${SAMPLE}_plasmidfinder.tsv | \
+  awk -F'\t' '{printf "%-30s %-15s %s%%\n", $6, $13, $10}'
+```
+
+**🧬 Análisis de Plásmidos en el Ensamblaje Nanopore**:
+
+```bash
+SAMPLE="URO5550422"
+
+echo "=== ANÁLISIS DE CONTIGS CIRCULARES (Posibles Plásmidos) ==="
+
+# Buscar contigs circulares en assembly_info.txt de Flye
+if [ -f "03_assembly/02_nanopore_only/assembly_info.txt" ]; then
+    echo ""
+    echo "Contigs circulares en ensamblaje Nanopore:"
+    grep "Y" 03_assembly/02_nanopore_only/assembly_info.txt | \
+      awk '$2 < 500000 {print $1, $2" bp", "Circular"}'
+fi
+
+# Para ensamblaje híbrido
+if [ -f "03_assembly/03_hybrid/assembly.gfa" ]; then
+    echo ""
+    echo "Analizando circularidad en ensamblaje híbrido..."
+    # Bandage puede detectar plásmidos circulares
+fi
+```
+
+---
+
+### 7.3 Factores de Virulencia
+
+```bash
+conda activate bact_amr
+
+mkdir -p 07_typing/virulence
+
+SAMPLE="URO5550422"
+ASSEMBLY="03_assembly/BEST_ASSEMBLY.fasta"
+
+echo "========================================"
+echo "Detección de Factores de Virulencia"
+echo "========================================"
+
+# Usar Abricate con base de datos VFDB
+abricate --db vfdb \
+  ${ASSEMBLY} > \
+  07_typing/virulence/${SAMPLE}_vfdb.tsv
+
+echo "✓ VFDB completado"
+echo ""
+
+# Resumen
+echo "=== FACTORES DE VIRULENCIA DETECTADOS ==="
+echo "Total de genes:"
+grep -v "^#" 07_typing/virulence/${SAMPLE}_vfdb.tsv | wc -l
+
+echo ""
+echo "Genes de alta confianza (>90% identidad):"
+awk -F'\t' '$10 > 90' 07_typing/virul
