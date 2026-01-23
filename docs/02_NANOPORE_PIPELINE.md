@@ -695,4 +695,761 @@ grep "# indels per 100 kbp" \
 **🎯 Mejora Esperada con Medaka:**
 
 | Métrica | Antes | Después | Mejora |
-|---------|-------|
+|---------|-------|---------|--------|
+| Mismatches/100kb | 150-200 | 50-100 | ~50-60% |
+| Indels/100kb | 400-500 | 150-250 | ~50-60% |
+| Precisión general | ~95% | ~98% | +3% |
+
+---
+
+## 🗺️ Fase 5: Mapeo Contra Referencia
+
+### Objetivo
+
+Mapear las lecturas filtradas contra el genoma de referencia para análisis de cobertura y validación.
+
+### Paso 5.1: Indexar Genoma de Referencia
+
+```bash
+echo "========================================"
+echo "Preparando Referencia para Minimap2"
+echo "========================================"
+
+REFERENCE="01_reference/reference.fasta"
+
+# Índice para Samtools (si no existe)
+if [ ! -f "${REFERENCE}.fai" ]; then
+    echo "Creando índice FAI..."
+    samtools faidx ${REFERENCE}
+fi
+
+# Índice para Minimap2 (opcional, acelera mapeo)
+if [ ! -f "${REFERENCE}.mmi" ]; then
+    echo "Creando índice Minimap2..."
+    minimap2 -d ${REFERENCE}.mmi ${REFERENCE}
+fi
+
+echo "✓ Índices creados"
+```
+
+### Paso 5.2: Mapeo con Minimap2
+
+```bash
+echo "========================================"
+echo "Mapeo con Minimap2"
+echo "Muestra: ${SAMPLE}"
+echo "Inicio: $(date)"
+echo "========================================"
+
+# Variables
+NANOPORE_FILT="02_qc/04_nanopore_filtered/${SAMPLE}_ont_filtered.fastq.gz"
+REFERENCE="01_reference/reference.fasta"
+THREADS=8
+
+# Crear directorio
+mkdir -p 04_mapping/02_nanopore
+
+# Mapeo con Minimap2 y conversión a BAM
+minimap2 -ax map-ont -t ${THREADS} \
+  ${REFERENCE} \
+  ${NANOPORE_FILT} | \
+  samtools view -Sb - | \
+  samtools sort -@ ${THREADS} -o 04_mapping/02_nanopore/${SAMPLE}_sorted.bam
+
+echo "✓ Mapeo completado"
+echo "  Fin: $(date)"
+```
+
+**⚙️ Parámetros de Minimap2:**
+
+- `-ax map-ont`: Preset para Nanopore vs referencia
+- `-t 8`: Usar 8 threads
+- Salida en formato SAM (pipe a samtools)
+
+### Paso 5.3: Indexar BAM
+
+```bash
+echo "Indexando BAM..."
+samtools index 04_mapping/02_nanopore/${SAMPLE}_sorted.bam
+
+echo "✓ BAM indexado"
+ls -lh 04_mapping/02_nanopore/
+```
+
+### Paso 5.4: Estadísticas de Mapeo
+
+```bash
+echo "========================================"
+echo "Estadísticas de Mapeo"
+echo "========================================"
+
+BAM="04_mapping/02_nanopore/${SAMPLE}_sorted.bam"
+
+# Flagstat (estadísticas generales)
+samtools flagstat ${BAM} > \
+  04_mapping/02_nanopore/${SAMPLE}_flagstat.txt
+
+# Mostrar flagstat
+cat 04_mapping/02_nanopore/${SAMPLE}_flagstat.txt
+
+# Cobertura por secuencia
+samtools coverage ${BAM} > \
+  04_mapping/02_nanopore/${SAMPLE}_coverage.txt
+
+# Mostrar cobertura
+echo ""
+echo "=== COBERTURA POR SECUENCIA ==="
+cat 04_mapping/02_nanopore/${SAMPLE}_coverage.txt
+
+# Profundidad promedio
+samtools depth ${BAM} | \
+  awk '{sum+=$3; count++} END {print "Profundidad promedio:", sum/count"x"}' > \
+  04_mapping/02_nanopore/${SAMPLE}_mean_depth.txt
+
+cat 04_mapping/02_nanopore/${SAMPLE}_mean_depth.txt
+```
+
+**📊 Valores esperados:**
+
+| Métrica | Valor Ideal | Aceptable | ⚠️ Revisar si |
+|---------|-------------|-----------|--------------|
+| % mapeado | >95% | >90% | <90% |
+| Cobertura promedio | 50-100x | 30-150x | <30x |
+| Reads primarios | >90% | >85% | <85% |
+
+---
+
+## 📈 Fase 6: Análisis de Cobertura
+
+### Objetivo
+
+Analizar la cobertura detallada por cada elemento genómico (cromosoma y plásmidos).
+
+### Paso 6.1: Cobertura Global
+
+```bash
+echo "========================================"
+echo "Análisis de Cobertura"
+echo "========================================"
+
+BAM="04_mapping/02_nanopore/${SAMPLE}_sorted.bam"
+
+# Crear directorio
+mkdir -p 04_mapping/04_coverage_analysis
+
+# Cobertura por secuencia
+samtools coverage ${BAM} > \
+  04_mapping/04_coverage_analysis/${SAMPLE}_nanopore_coverage_summary.txt
+
+# Mostrar resumen
+echo "=== COBERTURA POR SECUENCIA ==="
+cat 04_mapping/04_coverage_analysis/${SAMPLE}_nanopore_coverage_summary.txt
+```
+
+### Paso 6.2: Cobertura por Cromosoma y Plásmidos
+
+```bash
+echo "========================================"
+echo "Cobertura por Elemento Genómico"
+echo "========================================"
+
+# Leer secuencias del genoma de referencia
+while read -r seqid rest; do
+    # Saltar líneas de comentario
+    [[ $seqid == \#* ]] && continue
+    
+    echo "Procesando: $seqid"
+    
+    # Extraer reads mapeados a esta secuencia
+    samtools view -b ${BAM} "$seqid" > \
+      04_mapping/04_coverage_analysis/${SAMPLE}_nanopore_${seqid}.bam
+    
+    # Indexar
+    samtools index 04_mapping/04_coverage_analysis/${SAMPLE}_nanopore_${seqid}.bam
+    
+    # Profundidad promedio
+    samtools depth 04_mapping/04_coverage_analysis/${SAMPLE}_nanopore_${seqid}.bam | \
+      awk -v seq="$seqid" '{sum+=$3; count++} END {
+        if (count>0) printf "%s\t%.2fx\n", seq, sum/count
+        else printf "%s\t0x\n", seq
+      }' >> 04_mapping/04_coverage_analysis/${SAMPLE}_nanopore_depth_per_sequence.txt
+
+done < 01_reference/reference_sequences.txt
+
+echo "✓ Análisis por secuencia completado"
+```
+
+### Paso 6.3: Uniformidad de Cobertura
+
+```bash
+echo "========================================"
+echo "Análisis de Uniformidad"
+echo "========================================"
+
+# Calcular estadísticas de profundidad
+samtools depth ${BAM} | \
+  awk '{print $3}' | \
+  sort -n | \
+  awk '
+    BEGIN {count=0; sum=0}
+    {
+      depth[count++] = $1
+      sum += $1
+    }
+    END {
+      mean = sum/count
+      median = depth[int(count/2)]
+      
+      # Percentiles
+      p25 = depth[int(count*0.25)]
+      p75 = depth[int(count*0.75)]
+      
+      printf "Mean depth: %.2fx\n", mean
+      printf "Median depth: %.2fx\n", median
+      printf "25th percentile: %.2fx\n", p25
+      printf "75th percentile: %.2fx\n", p75
+      printf "IQR: %.2fx\n", p75-p25
+    }
+  ' > 04_mapping/04_coverage_analysis/${SAMPLE}_depth_stats.txt
+
+cat 04_mapping/04_coverage_analysis/${SAMPLE}_depth_stats.txt
+```
+
+**🎯 Cobertura Ideal:**
+- Media y mediana muy cercanas (distribución simétrica)
+- IQR (rango intercuartílico) pequeño
+- Sin regiones grandes con 0x cobertura
+
+---
+
+## 🔄 Fase 7: Identificación de Elementos Circulares
+
+### Objetivo
+
+Confirmar qué elementos son circulares (cromosoma, plásmidos) y extraerlos individualmente.
+
+### Paso 7.1: Lista de Elementos Circulares
+
+```bash
+echo "========================================"
+echo "Elementos Circulares Identificados"
+echo "========================================"
+
+# Extraer elementos circulares del assembly_info.txt
+grep "circular=Y" 03_assembly/02_nanopore_only/assembly_info.txt > \
+  03_assembly/02_nanopore_only/circular_elements.txt
+
+# Mostrar
+echo "=== ELEMENTOS CIRCULARES ==="
+cat 03_assembly/02_nanopore_only/circular_elements.txt
+
+# Contar
+CIRCULAR_COUNT=$(wc -l < 03_assembly/02_nanopore_only/circular_elements.txt)
+echo ""
+echo "Total de elementos circulares: $CIRCULAR_COUNT"
+```
+
+### Paso 7.2: Extraer Secuencias Circulares
+
+```bash
+echo "========================================"
+echo "Extrayendo Secuencias Circulares"
+echo "========================================"
+
+# Crear directorio
+mkdir -p 03_assembly/02_nanopore_only/circular_sequences
+
+# Archivo de ensamblaje
+ASSEMBLY="03_assembly/02_nanopore_only/${SAMPLE}_nanopore_polished.fasta"
+
+# Extraer cada elemento circular
+while read -r contig_name length cov circ rest; do
+    echo "Extrayendo: $contig_name (${length} bp)"
+    
+    # Extraer secuencia con samtools
+    samtools faidx ${ASSEMBLY} ${contig_name} > \
+      03_assembly/02_nanopore_only/circular_sequences/${contig_name}.fasta
+    
+done < 03_assembly/02_nanopore_only/circular_elements.txt
+
+echo "✓ Secuencias circulares extraídas"
+ls -lh 03_assembly/02_nanopore_only/circular_sequences/
+```
+
+### Paso 7.3: Clasificar Cromosoma vs Plásmidos
+
+```bash
+echo "========================================"
+echo "Clasificación: Cromosoma vs Plásmidos"
+echo "========================================"
+
+# Crear directorio
+mkdir -p 03_assembly/02_nanopore_only/classified
+
+# Clasificar por tamaño
+while read -r contig_name length rest; do
+    if [ $length -gt 4000000 ]; then
+        # Cromosoma (>4 Mb)
+        echo "$contig_name ($length bp) → CROMOSOMA"
+        cp 03_assembly/02_nanopore_only/circular_sequences/${contig_name}.fasta \
+           03_assembly/02_nanopore_only/classified/chromosome.fasta
+    else
+        # Plásmido (<4 Mb)
+        echo "$contig_name ($length bp) → PLÁSMIDO"
+        cp 03_assembly/02_nanopore_only/circular_sequences/${contig_name}.fasta \
+           03_assembly/02_nanopore_only/classified/plasmid_${contig_name}.fasta
+    fi
+done < 03_assembly/02_nanopore_only/circular_elements.txt
+
+echo ""
+echo "✓ Elementos clasificados en: 03_assembly/02_nanopore_only/classified/"
+ls -lh 03_assembly/02_nanopore_only/classified/
+```
+
+---
+
+## 📊 Interpretación de Resultados
+
+### Resumen del Pipeline
+
+```bash
+echo "========================================"
+echo "RESUMEN FINAL - Pipeline Nanopore"
+echo "Muestra: ${SAMPLE}"
+echo "========================================"
+echo ""
+
+# 1. Control de Calidad
+echo "=== 1. CONTROL DE CALIDAD ==="
+echo "Datos crudos:"
+grep "Number of reads:" 02_qc/03_nanopore_raw/NanoStats.txt
+grep "Total bases:" 02_qc/03_nanopore_raw/NanoStats.txt
+grep "Read length N50:" 02_qc/03_nanopore_raw/NanoStats.txt
+
+echo ""
+echo "Datos filtrados:"
+grep "Number of reads:" 02_qc/04_nanopore_filtered/NanoStats.txt
+grep "Total bases:" 02_qc/04_nanopore_filtered/NanoStats.txt
+grep "Read length N50:" 02_qc/04_nanopore_filtered/NanoStats.txt
+
+echo ""
+
+# 2. Ensamblaje
+echo "=== 2. ENSAMBLAJE ==="
+ASSEMBLY="03_assembly/02_nanopore_only/${SAMPLE}_nanopore_polished.fasta"
+echo "Archivo: ${SAMPLE}_nanopore_polished.fasta"
+echo -n "  Contigs totales: "
+grep -c ">" ${ASSEMBLY}
+echo -n "  Elementos circulares: "
+grep -c "circular=Y" 03_assembly/02_nanopore_only/assembly_info.txt || echo "0"
+echo -n "  Tamaño total: "
+grep -v ">" ${ASSEMBLY} | tr -d '\n' | wc -c | awk '{printf "%'"'"'d bp\n", $1}'
+
+# Identificar cromosoma
+echo -n "  Cromosoma: "
+awk '$2 > 4000000 {printf "%s (%d bp)\n", $1, $2}' \
+  03_assembly/02_nanopore_only/assembly_info.txt
+
+# Contar plásmidos
+PLASMID_COUNT=$(awk '$2 < 4000000 && $4 == "Y"' \
+  03_assembly/02_nanopore_only/assembly_info.txt | wc -l)
+echo "  Plásmidos: $PLASMID_COUNT"
+
+echo ""
+
+# 3. Calidad (QUAST)
+echo "=== 3. CALIDAD DEL ENSAMBLAJE ==="
+if [ -f "03_assembly/04_quast_evaluation/report.txt" ]; then
+    grep "N50" 03_assembly/04_quast_evaluation/report.txt | head -1
+    grep "L50" 03_assembly/04_quast_evaluation/report.txt | head -1
+    grep "# mismatches per 100 kbp" 03_assembly/04_quast_evaluation/report.txt
+    grep "# indels per 100 kbp" 03_assembly/04_quast_evaluation/report.txt
+fi
+
+echo ""
+
+# 4. Mapeo
+echo "=== 4. MAPEO ==="
+echo "Reads mapeados:"
+grep "mapped (" 04_mapping/02_nanopore/${SAMPLE}_flagstat.txt | head -1
+echo "Cobertura promedio:"
+cat 04_mapping/02_nanopore/${SAMPLE}_mean_depth.txt
+
+echo ""
+echo "========================================"
+echo "✓ Pipeline Nanopore Completado"
+echo "========================================"
+```
+
+### Archivos Importantes Generados
+
+```bash
+echo "=== ARCHIVOS IMPORTANTES ==="
+echo ""
+echo "Control de Calidad:"
+echo "  - 02_qc/03_nanopore_raw/NanoPlot-report.html"
+echo "  - 02_qc/04_nanopore_filtered/NanoPlot-report.html"
+echo ""
+echo "Ensamblaje:"
+echo "  - 03_assembly/02_nanopore_only/${SAMPLE}_nanopore_assembly.fasta"
+echo "  - 03_assembly/02_nanopore_only/${SAMPLE}_nanopore_polished.fasta (USAR ESTE)"
+echo "  - 03_assembly/02_nanopore_only/assembly_info.txt"
+echo "  - 03_assembly/04_quast_evaluation/report.html"
+echo ""
+echo "Elementos Circulares:"
+echo "  - 03_assembly/02_nanopore_only/classified/chromosome.fasta"
+echo "  - 03_assembly/02_nanopore_only/classified/plasmid_*.fasta"
+echo ""
+echo "Mapeo:"
+echo "  - 04_mapping/02_nanopore/${SAMPLE}_sorted.bam"
+echo "  - 04_mapping/04_coverage_analysis/${SAMPLE}_nanopore_coverage_summary.txt"
+```
+
+---
+
+## 🎯 Criterios de Calidad
+
+### ✅ Ensamblaje Exitoso
+
+| Criterio | Valor Mínimo | Valor Óptimo |
+|----------|--------------|--------------|
+| **Número de contigs** | <15 | <10 |
+| **Elementos circulares** | ≥1 (cromosoma) | 5-8 (cromosoma + plásmidos) |
+| **N50** | >1 Mb | >5 Mb |
+| **L50** | <5 | 1-2 |
+| **Tamaño total** | 5.0-6.0 Mb | 5.5-5.8 Mb |
+| **% Reads mapeados** | >85% | >90% |
+| **Cobertura promedio** | >40x | >60x |
+| **Cromosoma circular** | Sí | Sí |
+
+### ⚠️ Señales de Alerta
+
+| Problema | Posible Causa | Solución |
+|----------|---------------|----------|
+| >20 contigs | Cobertura baja o mala calidad | Aumentar cobertura, mejorar filtrado |
+| Cromosoma NO circular | Cobertura insuficiente | Obtener más datos, verificar calidad |
+| Muchos plásmidos NO circulares | Plásmidos de bajo copy number | Aumentar cobertura |
+| Cobertura <30x | Datos insuficientes | Re-secuenciar |
+| N50 <500 kb | Problema de ensamblaje | Revisar parámetros Flye |
+| Alta tasa de indels (>500/100kb) | Falta polishing | Ejecutar Medaka |
+
+---
+
+## 🔧 Solución de Problemas
+
+### Problema 1: Flye Falla con "Not Enough Data"
+
+**Síntoma:**
+```
+[ERROR] Alignment error: not enough reads
+```
+
+**Causas:**
+- Cobertura <20x
+- Reads muy cortos (<1 kb promedio)
+- Genoma muy pequeño para `--genome-size`
+
+**Solución:**
+```bash
+# Verificar cobertura
+TOTAL_BASES=$(grep "Total bases:" 02_qc/04_nanopore_filtered/NanoStats.txt | awk '{print $NF}')
+GENOME_SIZE=5700000
+COVERAGE=$(echo "$TOTAL_BASES / $GENOME_SIZE" | bc)
+echo "Cobertura estimada: ${COVERAGE}x"
+
+# Si <20x, necesitas más datos o reducir --target_bases en Filtlong
+# Si reads muy cortos, reducir --min_length en Filtlong
+
+# Ajustar --genome-size si es necesario
+flye --nano-raw ... --genome-size 6m  # Aumentar si tienes muchos plásmidos
+```
+
+### Problema 2: Cromosoma NO Sale Circular
+
+**Síntoma:**
+```
+contig_1    5334567    67    N    ...
+```
+(circ. = N en lugar de Y)
+
+**Causas:**
+- Cobertura insuficiente en extremos
+- Reads no suficientemente largos
+- Región repetitiva en extremos
+
+**Solución:**
+```bash
+# 1. Verificar cobertura en extremos
+samtools depth 04_mapping/02_nanopore/${SAMPLE}_sorted.bam | \
+  head -1000 | awk '{print $3}' | \
+  awk '{sum+=$1; n++} END {print "Cobertura inicio:", sum/n"x"}'
+
+samtools depth 04_mapping/02_nanopore/${SAMPLE}_sorted.bam | \
+  tail -1000 | awk '{print $3}' | \
+  awk '{sum+=$1; n++} END {print "Cobertura final:", sum/n"x"}'
+
+# 2. Si cobertura baja (<20x), necesitas más datos
+
+# 3. Intentar forzar circularidad manualmente (avanzado)
+# Usar herramientas como Circlator o inspeccionar grafo con Bandage
+```
+
+### Problema 3: Muchos Contigs Pequeños (Basura)
+
+**Síntoma:**
+```
+# contigs: 45
+Muchos contigs <10 kb
+```
+
+**Causas:**
+- Contaminación
+- Artefactos de secuenciación
+- Phage, plásmidos pequeños
+
+**Diagnóstico:**
+```bash
+# Listar contigs pequeños
+awk '$2 < 10000' 03_assembly/02_nanopore_only/assembly_info.txt
+
+# Verificar cobertura (contaminación suele tener baja cobertura)
+awk '$2 < 10000 && $3 < 10' 03_assembly/02_nanopore_only/assembly_info.txt
+```
+
+**Solución:**
+```bash
+# Filtrar contigs pequeños y de baja cobertura
+# Crear ensamblaje limpio
+seqtk seq -L 1000 ${ASSEMBLY} > ${SAMPLE}_nanopore_filtered.fasta
+
+# O usar solo elementos circulares (más confiable)
+cat 03_assembly/02_nanopore_only/classified/*.fasta > \
+  ${SAMPLE}_circular_only.fasta
+```
+
+### Problema 4: Medaka Muy Lento
+
+**Síntoma:**
+Medaka toma >8 horas.
+
+**Solución:**
+```bash
+# Usar GPU si disponible
+medaka_consensus ... --device cuda
+
+# Reducir threads si causa problemas de memoria
+medaka_consensus ... -t 4
+
+# Alternativamente, omitir Medaka si la precisión es aceptable
+# (revisar QUAST: si indels <300/100kb, puede ser suficiente)
+```
+
+### Problema 5: Alta Tasa de Errores Después de Polishing
+
+**Síntoma:**
+```
+# indels per 100 kbp: 450 (esperado <250)
+```
+
+**Causas:**
+- Modelo Medaka incorrecto
+- Datos de mala calidad
+- Necesita más rondas de polishing
+
+**Solución:**
+```bash
+# 1. Verificar modelo Medaka correcto
+medaka tools list_models
+
+# 2. Ejecutar ronda adicional de Medaka
+medaka_consensus \
+  -i ${NANOPORE_FILT} \
+  -d 03_assembly/02_nanopore_only/${SAMPLE}_nanopore_polished.fasta \
+  -o 03_assembly/02_nanopore_only/medaka_polish_round2 \
+  -t 8 -m r941_min_high_g360
+
+# 3. Si tienes datos Illumina, usa pipeline híbrido para mejor precisión
+```
+
+---
+
+## 🚀 Script Completo del Pipeline
+
+```bash
+cat > scripts/run_nanopore_pipeline.sh << 'EOF'
+#!/bin/bash
+
+# Script completo del Pipeline Nanopore
+# Uso: bash scripts/run_nanopore_pipeline.sh SAMPLE_NAME
+
+set -e  # Salir si hay error
+
+SAMPLE=$1
+THREADS=8
+GENOME_SIZE="5.7m"
+MEDAKA_MODEL="r941_min_high_g360"  # AJUSTAR SEGÚN TU FLOWCELL
+
+if [ -z "$SAMPLE" ]; then
+    echo "Uso: bash $0 SAMPLE_NAME"
+    exit 1
+fi
+
+echo "========================================"
+echo "Pipeline Nanopore Completo"
+echo "Muestra: ${SAMPLE}"
+echo "Inicio: $(date)"
+echo "========================================"
+
+# Activar ambiente
+conda activate bact_main
+
+# Variables
+NANOPORE="00_raw_data/nanopore/${SAMPLE}_1.fastq.gz"
+REFERENCE="01_reference/reference.fasta"
+
+# Verificar archivo
+if [ ! -f "$NANOPORE" ]; then
+    echo "❌ Error: Archivo FASTQ no encontrado: $NANOPORE"
+    exit 1
+fi
+
+###############################
+# FASE 1: CONTROL DE CALIDAD
+###############################
+echo ""
+echo "=== FASE 1: Control de Calidad ==="
+
+# NanoPlot raw
+mkdir -p 02_qc/03_nanopore_raw
+NanoPlot --fastq ${NANOPORE} \
+  -o 02_qc/03_nanopore_raw/ -t ${THREADS} \
+  --plots kde dot --N50 \
+  --title "${SAMPLE} - Raw Nanopore Data"
+
+# Filtlong
+mkdir -p 02_qc/04_nanopore_filtered
+filtlong --min_length 1000 --keep_percent 90 --target_bases 500000000 \
+  ${NANOPORE} | \
+  pigz -p ${THREADS} > 02_qc/04_nanopore_filtered/${SAMPLE}_ont_filtered.fastq.gz
+
+# NanoPlot filtered
+NanoPlot --fastq 02_qc/04_nanopore_filtered/${SAMPLE}_ont_filtered.fastq.gz \
+  -o 02_qc/04_nanopore_filtered/ -t ${THREADS} \
+  --plots kde dot --N50 \
+  --title "${SAMPLE} - Filtered Nanopore Data"
+
+echo "✓ Control de calidad completado"
+
+###############################
+# FASE 2: ENSAMBLAJE
+###############################
+echo ""
+echo "=== FASE 2: Ensamblaje con Flye ==="
+
+NANOPORE_FILT="02_qc/04_nanopore_filtered/${SAMPLE}_ont_filtered.fastq.gz"
+mkdir -p 03_assembly/02_nanopore_only
+
+flye --nano-raw ${NANOPORE_FILT} \
+  --out-dir 03_assembly/02_nanopore_only/ \
+  --genome-size ${GENOME_SIZE} \
+  --threads ${THREADS} \
+  --iterations 3 --meta
+
+cp 03_assembly/02_nanopore_only/assembly.fasta \
+   03_assembly/02_nanopore_only/${SAMPLE}_nanopore_assembly.fasta
+
+echo "✓ Ensamblaje completado"
+
+###############################
+# FASE 3: EVALUACIÓN
+###############################
+echo ""
+echo "=== FASE 3: Evaluación con QUAST ==="
+
+ASSEMBLY="03_assembly/02_nanopore_only/${SAMPLE}_nanopore_assembly.fasta"
+mkdir -p 03_assembly/04_quast_evaluation
+
+quast.py ${ASSEMBLY} -r ${REFERENCE} \
+  -o 03_assembly/04_quast_evaluation/ \
+  --threads ${THREADS} --labels "Nanopore_${SAMPLE}" \
+  --glimmer --min-contig 200 -q
+
+echo "✓ Evaluación completada"
+
+###############################
+# FASE 4: POLISHING
+###############################
+echo ""
+echo "=== FASE 4: Polishing con Medaka ==="
+
+mkdir -p 03_assembly/02_nanopore_only/medaka_polish
+
+medaka_consensus \
+  -i ${NANOPORE_FILT} -d ${ASSEMBLY} \
+  -o 03_assembly/02_nanopore_only/medaka_polish \
+  -t ${THREADS} -m ${MEDAKA_MODEL}
+
+cp 03_assembly/02_nanopore_only/medaka_polish/consensus.fasta \
+   03_assembly/02_nanopore_only/${SAMPLE}_nanopore_polished.fasta
+
+echo "✓ Polishing completado"
+
+###############################
+# FASE 5: MAPEO
+###############################
+echo ""
+echo "=== FASE 5: Mapeo con Minimap2 ==="
+
+[ ! -f "${REFERENCE}.fai" ] && samtools faidx ${REFERENCE}
+
+mkdir -p 04_mapping/02_nanopore
+
+minimap2 -ax map-ont -t ${THREADS} ${REFERENCE} ${NANOPORE_FILT} | \
+  samtools view -Sb - | \
+  samtools sort -@ ${THREADS} -o 04_mapping/02_nanopore/${SAMPLE}_sorted.bam
+
+samtools index 04_mapping/02_nanopore/${SAMPLE}_sorted.bam
+
+# Estadísticas
+samtools flagstat 04_mapping/02_nanopore/${SAMPLE}_sorted.bam > \
+  04_mapping/02_nanopore/${SAMPLE}_flagstat.txt
+samtools coverage 04_mapping/02_nanopore/${SAMPLE}_sorted.bam > \
+  04_mapping/02_nanopore/${SAMPLE}_coverage.txt
+samtools depth 04_mapping/02_nanopore/${SAMPLE}_sorted.bam | \
+  awk '{sum+=$3; count++} END {print "Profundidad promedio:", sum/count"x"}' > \
+  04_mapping/02_nanopore/${SAMPLE}_mean_depth.txt
+
+echo "✓ Mapeo completado"
+
+###############################
+# FASE 6: COBERTURA
+###############################
+echo ""
+echo "=== FASE 6: Análisis de Cobertura ==="
+
+BAM="04_mapping/02_nanopore/${SAMPLE}_sorted.bam"
+mkdir -p 04_mapping/04_coverage_analysis
+
+samtools coverage ${BAM} > \
+  04_mapping/04_coverage_analysis/${SAMPLE}_nanopore_coverage_summary.txt
+
+# Por secuencia
+while read -r seqid rest; do
+    [[ $seqid == \#* ]] && continue
+    samtools view -b ${BAM} "$seqid" > \
+      04_mapping/04_coverage_analysis/${SAMPLE}_nanopore_${seqid}.bam
+    samtools index 04_mapping/04_coverage_analysis/${SAMPLE}_nanopore_${seqid}.bam
+done < 01_reference/reference_sequences.txt
+
+echo "✓ Análisis de cobertura completado"
+
+###############################
+# FASE 7: ELEMENTOS CIRCULARES
+###############################
+echo ""
+echo "=== FASE 7: Identificación de Elementos Circulares ==="
+
+grep "circular=Y" 03_assembly/02_nanopore_only/assembly_info.txt > \
+  03_assembly/02_nanopore_only/circular_elements.txt || true
+
+mkdir -p 03_assembly/02_nanopore_only/circular_sequences
